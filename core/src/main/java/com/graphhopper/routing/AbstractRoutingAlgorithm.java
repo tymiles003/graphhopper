@@ -1,14 +1,14 @@
 /*
- *  Licensed to GraphHopper and Peter Karich under one or more contributor
- *  license agreements. See the NOTICE file distributed with this work for 
+ *  Licensed to GraphHopper GmbH under one or more contributor
+ *  license agreements. See the NOTICE file distributed with this work for
  *  additional information regarding copyright ownership.
- * 
- *  GraphHopper licenses this file to you under the Apache License, 
- *  Version 2.0 (the "License"); you may not use this file except in 
+ *
+ *  GraphHopper GmbH licenses this file to you under the Apache License,
+ *  Version 2.0 (the "License"); you may not use this file except in
  *  compliance with the License. You may obtain a copy of the License at
- * 
+ *
  *       http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -17,114 +17,110 @@
  */
 package com.graphhopper.routing;
 
-import com.graphhopper.routing.util.*;
-import com.graphhopper.storage.EdgeEntry;
+import com.graphhopper.routing.querygraph.QueryGraph;
+import com.graphhopper.routing.util.TraversalMode;
+import com.graphhopper.routing.weighting.QueryGraphWeighting;
+import com.graphhopper.routing.weighting.Weighting;
 import com.graphhopper.storage.Graph;
 import com.graphhopper.storage.NodeAccess;
 import com.graphhopper.util.EdgeExplorer;
-import com.graphhopper.util.EdgeIterator;
 import com.graphhopper.util.EdgeIteratorState;
+
+import java.util.Collections;
+import java.util.List;
 
 /**
  * @author Peter Karich
  */
-public abstract class AbstractRoutingAlgorithm implements RoutingAlgorithm
-{
-    private EdgeFilter additionalEdgeFilter;
+public abstract class AbstractRoutingAlgorithm implements RoutingAlgorithm {
     protected final Graph graph;
-    protected NodeAccess nodeAccess;
-    protected EdgeExplorer inEdgeExplorer;
-    protected EdgeExplorer outEdgeExplorer;
     protected final Weighting weighting;
-    protected final FlagEncoder flagEncoder;
     protected final TraversalMode traversalMode;
-    protected double weightLimit = Double.MAX_VALUE;
+    protected final NodeAccess nodeAccess;
+    protected final EdgeExplorer edgeExplorer;
+    protected int maxVisitedNodes = Integer.MAX_VALUE;
+    protected long timeoutMillis = Long.MAX_VALUE;
+    private long finishTimeMillis = Long.MAX_VALUE;
     private boolean alreadyRun;
 
     /**
-     * @param graph specifies the graph where this algorithm will run on
-     * @param encoder sets the used vehicle (bike, car, foot)
-     * @param weighting set the used weight calculation (e.g. fastest, shortest).
+     * @param graph         specifies the graph where this algorithm will run on
+     * @param weighting     set the used weight calculation (e.g. fastest, shortest).
      * @param traversalMode how the graph is traversed e.g. if via nodes or edges.
      */
-    public AbstractRoutingAlgorithm( Graph graph, FlagEncoder encoder, Weighting weighting, TraversalMode traversalMode )
-    {
+    public AbstractRoutingAlgorithm(Graph graph, Weighting weighting, TraversalMode traversalMode) {
+        if (weighting.hasTurnCosts() && !traversalMode.isEdgeBased())
+            throw new IllegalStateException("Weightings supporting turn costs cannot be used with node-based traversal mode");
+        if (graph instanceof QueryGraph && !(weighting instanceof QueryGraphWeighting))
+            throw new IllegalStateException("Weighting must use QueryGraphWeighting");
         this.weighting = weighting;
-        this.flagEncoder = encoder;
         this.traversalMode = traversalMode;
         this.graph = graph;
         this.nodeAccess = graph.getNodeAccess();
-        outEdgeExplorer = graph.createEdgeExplorer(new DefaultEdgeFilter(flagEncoder, false, true));
-        inEdgeExplorer = graph.createEdgeExplorer(new DefaultEdgeFilter(flagEncoder, true, false));
+        edgeExplorer = graph.createEdgeExplorer();
     }
 
     @Override
-    public void setWeightLimit( double weight )
-    {
-        this.weightLimit = weight;
-    }
-       
-    public RoutingAlgorithm setEdgeFilter( EdgeFilter additionalEdgeFilter )
-    {
-        this.additionalEdgeFilter = additionalEdgeFilter;
-        return this;
+    public void setMaxVisitedNodes(int numberOfNodes) {
+        this.maxVisitedNodes = numberOfNodes;
     }
 
-    protected boolean accept( EdgeIterator iter, int prevOrNextEdgeId )
-    {
-        if (!traversalMode.hasUTurnSupport() && iter.getEdge() == prevOrNextEdgeId)
-            return false;
-
-        return additionalEdgeFilter == null || additionalEdgeFilter.accept(iter);
+    @Override
+    public void setTimeoutMillis(long timeoutMillis) {
+        this.timeoutMillis = timeoutMillis;
     }
 
-    protected void updateBestPath( EdgeIteratorState edgeState, EdgeEntry bestEdgeEntry, int traversalId )
-    {
+    protected boolean accept(EdgeIteratorState iter, int prevOrNextEdgeId) {
+        // for edge-based traversal we leave it for calcTurnWeight to decide whether or not a u-turn is acceptable,
+        // but for node-based traversal we exclude such a turn for performance reasons already here
+        return traversalMode.isEdgeBased() || iter.getEdge() != prevOrNextEdgeId;
     }
 
-    protected void checkAlreadyRun()
-    {
+    protected void checkAlreadyRun() {
         if (alreadyRun)
             throw new IllegalStateException("Create a new instance per call");
 
         alreadyRun = true;
     }
 
-    protected EdgeEntry createEdgeEntry( int node, double dist )
-    {
-        return new EdgeEntry(EdgeIterator.NO_EDGE, node, dist);
-    }
+    protected void setupFinishTime() {
+        if (timeoutMillis == Long.MAX_VALUE) {
+            this.finishTimeMillis = Long.MAX_VALUE;
+            return;
+        }
 
-    /**
-     * To be overwritten from extending class. Should we make this available in RoutingAlgorithm
-     * interface?
-     * <p/>
-     * @return true if finished.
-     */
-    protected abstract boolean finished();
-
-    /**
-     * To be overwritten from extending class. Should we make this available in RoutingAlgorithm
-     * interface?
-     * <p/>
-     * @return true if finished.
-     */
-    protected abstract Path extractPath();
-
-    protected Path createEmptyPath()
-    {
-        return new Path(graph, flagEncoder);
+        try {
+            this.finishTimeMillis = Math.addExact(System.currentTimeMillis(), timeoutMillis);
+        } catch (ArithmeticException e) {
+            this.finishTimeMillis = Long.MAX_VALUE;
+        }
     }
 
     @Override
-    public String getName()
-    {
+    public List<Path> calcPaths(int from, int to) {
+        return Collections.singletonList(calcPath(from, to));
+    }
+
+    protected Path createEmptyPath() {
+        return new Path(graph);
+    }
+
+    @Override
+    public String getName() {
         return getClass().getSimpleName();
     }
 
     @Override
-    public String toString()
-    {
+    public String toString() {
         return getName() + "|" + weighting;
     }
+
+    protected boolean isMaxVisitedNodesExceeded() {
+        return maxVisitedNodes < getVisitedNodes();
+    }
+
+    protected boolean isTimeoutExceeded() {
+        return finishTimeMillis < Long.MAX_VALUE && System.currentTimeMillis() > finishTimeMillis;
+    }
+
 }

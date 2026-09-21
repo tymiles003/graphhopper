@@ -1,14 +1,14 @@
 /*
- *  Licensed to GraphHopper and Peter Karich under one or more contributor
- *  license agreements. See the NOTICE file distributed with this work for 
+ *  Licensed to GraphHopper GmbH under one or more contributor
+ *  license agreements. See the NOTICE file distributed with this work for
  *  additional information regarding copyright ownership.
- * 
- *  GraphHopper licenses this file to you under the Apache License, 
- *  Version 2.0 (the "License"); you may not use this file except in 
+ *
+ *  GraphHopper GmbH licenses this file to you under the Apache License,
+ *  Version 2.0 (the "License"); you may not use this file except in
  *  compliance with the License. You may obtain a copy of the License at
- * 
+ *
  *       http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -17,98 +17,98 @@
  */
 package com.graphhopper.util;
 
-import com.graphhopper.routing.util.EncodingManager;
-import com.graphhopper.storage.GraphBuilder;
-import com.graphhopper.storage.Graph;
-import gnu.trove.list.TIntList;
-import gnu.trove.list.array.TIntArrayList;
-import gnu.trove.set.hash.TIntHashSet;
-import org.junit.Before;
-import org.junit.Test;
-import static org.junit.Assert.*;
+import com.carrotsearch.hppc.IntArrayList;
+import com.graphhopper.coll.GHBitSet;
+import com.graphhopper.coll.GHIntHashSet;
+import com.graphhopper.coll.GHTBitSet;
+import com.graphhopper.storage.BaseGraph;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
- *
  * @author Peter Karich
  */
-public class BreadthFirstSearchTest
-{
+public class BreadthFirstSearchTest {
     int counter;
-    TIntHashSet set = new TIntHashSet();
-    TIntList list = new TIntArrayList();
+    GHIntHashSet set = new GHIntHashSet();
+    IntArrayList list = new IntArrayList();
 
-    @Before
-    public void setup()
-    {
+    @BeforeEach
+    public void setup() {
         counter = 0;
     }
 
     @Test
-    public void testBFS()
-    {
-        BreadthFirstSearch bfs = new BreadthFirstSearch()
-        {
+    public void testBFS() {
+        BreadthFirstSearch bfs = new BreadthFirstSearch() {
             @Override
-            public boolean goFurther( int v )
-            {
+            protected GHBitSet createBitSet() {
+                return new GHTBitSet();
+            }
+
+            @Override
+            public boolean goFurther(int v) {
                 counter++;
-                assertTrue("v " + v + " is already contained in set. iteration:" + counter, !set.contains(v));
+                assertFalse(set.contains(v), "v " + v + " is already contained in set. iteration:" + counter);
                 set.add(v);
                 list.add(v);
                 return super.goFurther(v);
             }
         };
 
-        Graph g = new GraphBuilder(new EncodingManager("CAR")).create();
-        g.edge(0, 1, 85, true);
-        g.edge(0, 2, 217, true);
-        g.edge(0, 3, 173, true);
-        g.edge(0, 5, 173, true);
-        g.edge(1, 6, 75, true);
-        g.edge(2, 7, 51, true);
-        g.edge(3, 8, 23, true);
-        g.edge(4, 8, 793, true);
-        g.edge(8, 10, 343, true);
-        g.edge(6, 9, 72, true);
-        g.edge(9, 10, 8, true);
-        g.edge(5, 10, 1, true);
+        BaseGraph g = new BaseGraph.Builder(1).create();
+        g.edge(0, 1);
+        g.edge(0, 2);
+        g.edge(0, 3);
+        g.edge(0, 5);
+        g.edge(1, 6);
+        g.edge(2, 7);
+        g.edge(3, 8);
+        g.edge(4, 8);
+        g.edge(8, 10);
+        g.edge(6, 9);
+        g.edge(9, 10);
+        g.edge(5, 10);
 
         bfs.start(g.createEdgeExplorer(), 0);
 
         assertTrue(counter > 0);
         assertEquals(g.getNodes(), counter);
-        assertEquals("{0, 5, 3, 2, 1, 10, 8, 7, 6, 9, 4}", list.toString());
+        assertEquals("[0, 5, 3, 2, 1, 10, 8, 7, 6, 9, 4]", list.toString());
     }
-    
+
     @Test
-    public void testBFS2()
-    {
-        BreadthFirstSearch bfs = new BreadthFirstSearch()
-        {
+    public void testBFS2() {
+        BreadthFirstSearch bfs = new BreadthFirstSearch() {
             @Override
-            public boolean goFurther( int v )
-            {
+            protected GHBitSet createBitSet() {
+                return new GHTBitSet();
+            }
+
+            @Override
+            public boolean goFurther(int v) {
                 counter++;
-                assertTrue("v " + v + " is already contained in set. iteration:" + counter, !set.contains(v));
+                assertFalse(set.contains(v), "v " + v + " is already contained in set. iteration:" + counter);
                 set.add(v);
                 list.add(v);
                 return super.goFurther(v);
             }
         };
 
-        Graph g = new GraphBuilder(new EncodingManager("CAR")).create();
-        g.edge(1, 2, 1, false);
-        g.edge(2, 3, 1, false);
-        g.edge(3, 4, 1, false);
-        g.edge(1, 5, 1, false);
-        g.edge(5, 6, 1, false);
-        g.edge(6, 4, 1, false);
+        BaseGraph g = new BaseGraph.Builder(1).create();
+        g.edge(1, 2);
+        g.edge(2, 3);
+        g.edge(3, 4);
+        g.edge(1, 5);
+        g.edge(5, 6);
+        g.edge(6, 4);
 
         bfs.start(g.createEdgeExplorer(), 1);
 
         assertTrue(counter > 0);
-        assertEquals("{1, 5, 2, 6, 3, 4}", list.toString());
+        assertEquals("[1, 5, 2, 6, 3, 4]", list.toString());
     }
 
-    
 }

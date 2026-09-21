@@ -1,9 +1,9 @@
 /*
- *  Licensed to GraphHopper and Peter Karich under one or more contributor
+ *  Licensed to GraphHopper GmbH under one or more contributor
  *  license agreements. See the NOTICE file distributed with this work for
  *  additional information regarding copyright ownership.
  *
- *  GraphHopper licenses this file to you under the Apache License,
+ *  GraphHopper GmbH licenses this file to you under the Apache License,
  *  Version 2.0 (the "License"); you may not use this file except in
  *  compliance with the License. You may obtain a copy of the License at
  *
@@ -18,33 +18,38 @@
 package com.graphhopper.util;
 
 import java.text.DecimalFormat;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.text.DecimalFormatSymbols;
+import java.util.Locale;
 
 /**
  * @author Peter Karich
  */
-public abstract class MiniPerfTest
-{
-    protected Logger logger = LoggerFactory.getLogger(getClass());
+public class MiniPerfTest {
+
+    private static final double NS_PER_S = 1e9;
+    private static final double NS_PER_MS = 1e6;
+    private static final double NS_PER_US = 1e3;
+
     private int counts = 100;
-    private double fullTime = 0;
-    private double max;
-    private double min = Double.MAX_VALUE;
+    private int warmups = -1;
+    private long fullTime = 0;
+    private long max;
+    private long min = Long.MAX_VALUE;
     private int dummySum;
 
-    public MiniPerfTest start()
-    {
-        int warmupCount = Math.max(1, counts / 3);
-        for (int i = 0; i < warmupCount; i++)
-        {
-            dummySum += doCalc(true, i);
+    /**
+     * Important: Make sure to use the dummy sum in your program somewhere such that it's calculation cannot be skipped
+     * by the JVM. Either use {@link #getDummySum()} or {@link #getReport()} after running this method.
+     */
+    public MiniPerfTest start(Task m) {
+        int warmupCount = warmups >= 0 ? warmups : Math.max(1, counts / 3);
+        for (int i = 0; i < warmupCount; i++) {
+            dummySum += m.doCalc(true, i);
         }
         long startFull = System.nanoTime();
-        for (int i = 0; i < counts; i++)
-        {
+        for (int i = 0; i < counts; i++) {
             long start = System.nanoTime();
-            dummySum += doCalc(false, i);
+            dummySum += m.doCalc(false, i);
             long time = System.nanoTime() - start;
             if (time < min)
                 min = time;
@@ -53,12 +58,24 @@ public abstract class MiniPerfTest
                 max = time;
         }
         fullTime = System.nanoTime() - startFull;
-        logger.info("dummySum:" + dummySum);
         return this;
     }
 
-    public MiniPerfTest setIterations( int counts )
-    {
+    public interface Task {
+
+        /**
+         * @return return some integer as result from your processing to make sure that the JVM cannot
+         * optimize (away) the call or within the call something.
+         */
+        int doCalc(boolean warmup, int run);
+    }
+
+    public MiniPerfTest setWarmups(int warmups) {
+        this.warmups = warmups;
+        return this;
+    }
+
+    public MiniPerfTest setIterations(int counts) {
         this.counts = counts;
         return this;
     }
@@ -66,48 +83,57 @@ public abstract class MiniPerfTest
     /**
      * @return minimum time of every call, in ms
      */
-    public double getMin()
-    {
-        return min / 1e6;
+    public double getMin() {
+        return min / NS_PER_MS;
     }
 
     /**
      * @return maximum time of every calls, in ms
      */
-    public double getMax()
-    {
-        return max / 1e6;
+    public double getMax() {
+        return max / NS_PER_MS;
     }
 
     /**
      * @return time for all calls accumulated, in ms
      */
-    public double getSum()
-    {
-        return fullTime / 1e6;
+    public double getSum() {
+        return fullTime / NS_PER_MS;
     }
 
     /**
      * @return mean time per call, in ms
      */
-    public double getMean()
-    {
+    public double getMean() {
         return getSum() / counts;
     }
 
-    public String getReport()
-    {
-        return "sum:" + nf(getSum() / 1000f) + "s, time/call:" + nf(getMean() / 1000f) + "s";
+    private String formatDuration(double durationNs) {
+        double divisor;
+        String unit;
+        if (durationNs > 1e7d) {
+            divisor = NS_PER_S;
+            unit = "s";
+        } else if (durationNs > 1e4d) {
+            divisor = NS_PER_MS;
+            unit = "ms";
+        } else {
+            divisor = NS_PER_US;
+            unit = "µs";
+        }
+        return nf(durationNs / divisor) + unit;
     }
 
-    public String nf( Number num )
-    {
-        return new DecimalFormat("#.#").format(num);
+    public String getReport() {
+        double meanNs = ((double) fullTime) / counts;
+        return "sum:" + formatDuration(fullTime) + ", time/call:" + formatDuration(meanNs) + ", dummy: " + dummySum;
     }
 
-    /**
-     * @return return some integer as result from your processing to make sure that the JVM cannot
-     * optimize (away) the call or within the call something.
-     */
-    public abstract int doCalc( boolean warmup, int run );
+    public int getDummySum() {
+        return dummySum;
+    }
+
+    private String nf(Number num) {
+        return new DecimalFormat("#.###", DecimalFormatSymbols.getInstance(Locale.ROOT)).format(num);
+    }
 }

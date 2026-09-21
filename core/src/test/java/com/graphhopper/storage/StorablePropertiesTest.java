@@ -1,10 +1,10 @@
 /*
- *  Licensed to GraphHopper and Peter Karich under one or more contributor
- *  license agreements. See the NOTICE file distributed with this work for 
+ *  Licensed to GraphHopper GmbH under one or more contributor
+ *  license agreements. See the NOTICE file distributed with this work for
  *  additional information regarding copyright ownership.
  *
- *  GraphHopper licenses this file to you under the Apache License, 
- *  Version 2.0 (the "License"); you may not use this file except in 
+ *  GraphHopper GmbH licenses this file to you under the Apache License,
+ *  Version 2.0 (the "License"); you may not use this file except in
  *  compliance with the License. You may obtain a copy of the License at
  *
  *       http://www.apache.org/licenses/LICENSE-2.0
@@ -18,24 +18,26 @@
 package com.graphhopper.storage;
 
 import com.graphhopper.util.Helper;
+import org.junit.jupiter.api.Test;
+
 import java.io.File;
-import org.junit.Test;
-import static org.junit.Assert.*;
+import java.io.IOException;
+import java.io.StringReader;
+import java.util.HashMap;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
- *
  * @author Peter Karich
  */
-public class StorablePropertiesTest
-{
-    Directory createDir( String location, boolean store )
-    {
-        return new RAMDirectory(location, store);
+public class StorablePropertiesTest {
+    Directory createDir(String location, boolean store) {
+        return new GHDirectory(location, DAType.RAM);
     }
 
     @Test
-    public void testLoad()
-    {
+    public void testLoad() {
         StorableProperties instance = new StorableProperties(createDir("", false));
         // an in-memory storage does not load anything
         assertFalse(instance.loadExisting());
@@ -46,28 +48,7 @@ public class StorablePropertiesTest
     }
 
     @Test
-    public void testVersionCheck()
-    {
-        StorableProperties instance = new StorableProperties(createDir("", false));
-        instance.putCurrentVersions();
-        assertTrue(instance.checkVersions(true));
-
-        instance.put("nodes.version", 0);
-        assertFalse(instance.checkVersions(true));
-
-        try
-        {
-            instance.checkVersions(false);
-            assertTrue(false);
-        } catch (Exception ex)
-        {
-        }
-        instance.close();
-    }
-
-    @Test
-    public void testStore()
-    {
+    public void testStore() {
         String dir = "./target/test";
         Helper.removeDir(new File(dir));
         StorableProperties instance = new StorableProperties(createDir(dir, true));
@@ -86,4 +67,37 @@ public class StorablePropertiesTest
 
         Helper.removeDir(new File(dir));
     }
+
+    @Test
+    public void testStoreLarge() {
+        String dir = "./target/test";
+        Helper.removeDir(new File(dir));
+        StorableProperties instance = new StorableProperties(createDir(dir, true));
+        instance.create(1000);
+        for (int i = 0; i <= 100_000; i++) {
+            instance.put(Integer.toString(i), "test." + i);
+        }
+
+        instance.flush();
+        long bytesWritten = instance.getCapacity();
+        instance.close();
+
+        instance = new StorableProperties(createDir(dir, true));
+        assertTrue(instance.loadExisting());
+        assertEquals(bytesWritten, instance.getCapacity());
+        assertEquals("test.0", instance.get("0"));
+        assertEquals("test.100000", instance.get("100000"));
+        instance.close();
+
+        Helper.removeDir(new File(dir));
+    }
+
+    @Test
+    public void testLoadProperties() throws IOException {
+        Map<String, String> map = new HashMap<>();
+        StorableProperties.loadProperties(map, new StringReader("blup=test\n blup2 = xy"));
+        assertEquals("test", map.get("blup"));
+        assertEquals("xy", map.get("blup2"));
+    }
+
 }

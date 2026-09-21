@@ -1,12 +1,11 @@
 /*
- *  Licensed to Peter Karich under one or more contributor license
- *  agreements. See the NOTICE file distributed with this work for
+ *  Licensed to GraphHopper GmbH under one or more contributor
+ *  license agreements. See the NOTICE file distributed with this work for
  *  additional information regarding copyright ownership.
  *
- *  Peter Karich licenses this file to you under the Apache License,
- *  Version 2.0 (the "License"); you may not use this file except
- *  in compliance with the License. You may obtain a copy of the
- *  License at
+ *  GraphHopper GmbH licenses this file to you under the Apache License,
+ *  Version 2.0 (the "License"); you may not use this file except in
+ *  compliance with the License. You may obtain a copy of the License at
  *
  *       http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -18,55 +17,21 @@
  */
 package com.graphhopper.routing.util;
 
+import com.graphhopper.storage.RoutingCHEdgeIteratorState;
 import com.graphhopper.util.EdgeIteratorState;
 import com.graphhopper.util.GHUtility;
-import java.util.Arrays;
 
 /**
- * Defines how the graph can be traversed while Dijkstra or similar RoutingAlgorithm is in progress.
- * Different options define how precise turn restrictions and costs are taken into account, but
- * still all are without via-way support. BTW: this would not be done at runtime, this would be a
- * pre-processing step to avoid performance penalities.
- * <p>
  * @author Peter Karich
  */
-public enum TraversalMode
-{
-    /**
-     * The simplest traversal mode but without turn restrictions or cost support.
-     */
-    NODE_BASED(false, 1, false),
-    /**
-     * Strictly not recommended as it could lead to 'route not found' for bidirectional algorithms.
-     * An edged-based traversal mode with basic turn restriction and cost support, including the
-     * most scenarios. But without certain turn restrictions and without u-turns. As fast as node
-     * based.
-     */
-    EDGE_BASED_1DIR(true, 1, false),
-    /**
-     * The bidirectional edged-based traversal mode with turn restriction and cost support. Without
-     * u-turn support. 2 times slower than node based.
-     */
-    EDGE_BASED_2DIR(true, 2, false),
-    /**
-     * Not recommended as it leads to strange routes that outsmart the turn costs. The most feature
-     * rich edged-based traversal mode with turn restriction and cost support, including u-turns. 4
-     * times slower than node based.
-     */
-    EDGE_BASED_2DIR_UTURN(true, 2, true);
+public enum TraversalMode {
+    NODE_BASED(false),
+    EDGE_BASED(true);
 
     private final boolean edgeBased;
-    private final int noOfStates;
-    private final boolean uTurnSupport;
 
-    TraversalMode( boolean edgeBased, int noOfStates, boolean uTurnSupport )
-    {
+    TraversalMode(boolean edgeBased) {
         this.edgeBased = edgeBased;
-        this.noOfStates = noOfStates;
-        this.uTurnSupport = uTurnSupport;
-
-        if (noOfStates != 1 && noOfStates != 2)
-            throw new IllegalArgumentException("Currently only 1 or 2 states allowed");
     }
 
     /**
@@ -74,48 +39,33 @@ public enum TraversalMode
      * mode. E.g. returning the adjacent node id in node-based behavior whilst returning the edge id
      * in edge-based behavior
      * <p>
-     * @param iterState the current {@link EdgeIteratorState}
-     * @param reverse <code>true</code>, if traversal in backward direction. Will be true only for
-     * backward searches in bidirectional algorithms.
+     *
+     * @param edgeState the current {@link EdgeIteratorState}
+     * @param reverse   <code>true</code>, if traversal in backward direction. Will be true only for
+     *                  backward searches in bidirectional algorithms.
      * @return the identifier to access the shortest path tree
      */
-    public final int createTraversalId( EdgeIteratorState iterState, boolean reverse )
-    {
+    public final int createTraversalId(EdgeIteratorState edgeState, boolean reverse) {
         if (edgeBased)
-        {
-            if (noOfStates == 1)
-                return iterState.getEdge();
+            return reverse ? edgeState.getReverseEdgeKey() : edgeState.getEdgeKey();
+        return edgeState.getAdjNode();
+    }
 
-            return GHUtility.createEdgeKey(iterState.getAdjNode(), iterState.getBaseNode(), iterState.getEdge(), reverse);
+    public final int createTraversalId(RoutingCHEdgeIteratorState chEdgeState, boolean reverse) {
+        if (edgeBased) {
+            int key = reverse ? chEdgeState.getOrigEdgeKeyFirst() : chEdgeState.getOrigEdgeKeyLast();
+            // For reverse traversal we need to revert the edge key, but not for shortcuts.
+            // Why? Because of our definition of the first/last edge keys: they do not depend on the
+            // 'state' of the edge state, but are defined in terms of the direction of the (always directed) shortcut.
+            if (reverse && !chEdgeState.isShortcut() && chEdgeState.getBaseNode() != chEdgeState.getAdjNode())
+                key = GHUtility.reverseEdgeKey(key);
+            return key;
         }
-
-        return iterState.getAdjNode();
+        return chEdgeState.getAdjNode();
     }
 
-    public int getNoOfStates()
-    {
-        return noOfStates;
-    }
-
-    public boolean isEdgeBased()
-    {
+    public boolean isEdgeBased() {
         return edgeBased;
     }
 
-    public final boolean hasUTurnSupport()
-    {
-        return uTurnSupport;
-    }
-
-    public static TraversalMode fromString( String name )
-    {
-        try
-        {
-            return valueOf(name.toUpperCase());
-        } catch (Exception ex)
-        {
-            throw new IllegalArgumentException("TraversalMode " + name + " not supported. "
-                    + "Supported are: " + Arrays.asList(TraversalMode.values()));
-        }
-    }
 }

@@ -1,0 +1,21 @@
+version: '{build}'
+skip_tags: true
+clone_depth: 10
+
+# TODO somehow this config is ignored and defaults from account are used
+image: Visual Studio 2026
+environment:
+  MAVEN_OPTS: -Xmx1g
+  JAVA_OPTS: -Xmx1g
+install:
+  - java -version
+  - mvn --version
+build_script:
+  - mvn clean install -DskipTests=true -B
+test_script:
+  - mvn verify -B && mvn checkstyle:check forbiddenapis:check -B
+cache:
+  - C:\maven\
+  - C:\Users\appveyor\.m2
+artifacts:
+- path: web/target/*.jar

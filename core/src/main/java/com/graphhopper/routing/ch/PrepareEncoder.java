@@ -1,12 +1,11 @@
 /*
- *  Licensed to Peter Karich under one or more contributor license
- *  agreements. See the NOTICE file distributed with this work for
+ *  Licensed to GraphHopper GmbH under one or more contributor
+ *  license agreements. See the NOTICE file distributed with this work for
  *  additional information regarding copyright ownership.
  *
- *  Peter Karich licenses this file to you under the Apache License,
- *  Version 2.0 (the "License"); you may not use this file except
- *  in compliance with the License. You may obtain a copy of the
- *  License at
+ *  GraphHopper GmbH licenses this file to you under the Apache License,
+ *  Version 2.0 (the "License"); you may not use this file except in
+ *  compliance with the License. You may obtain a copy of the License at
  *
  *       http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -19,43 +18,35 @@
 package com.graphhopper.routing.ch;
 
 /**
- * The flags are stored differently for shortcuts: just a weight and the direction flags. Currently
- * it is not allowed to store multiple vehicles.
- * <p>
+ * The flags are stored differently for shortcuts: just one weight and the two direction bits which is handled by this
+ * class for now as static methods.
+ *
  * @author Peter Karich
  */
-public class PrepareEncoder
-{
-    // shortcut is one direction, speed is only involved while recalculating the adjNode weights
-    // see PrepareContractionHierarchies.prepareEdges
-    private static final long scFwdDir = 0x1;
-    private static final long scDirMask = 0x3;
+public class PrepareEncoder {
+    // shortcut goes in one or both directions is also possible if weight is identical    
+    private static final int scFwdDir = 0x1;
+    private static final int scBwdDir = 0x2;
+    private static final int scDirMask = 0x3;
 
-    public static final long getScDirMask()
-    {
+    /**
+     * A bitmask for two directions
+     */
+    public static int getScDirMask() {
         return scDirMask;
     }
 
-    public static final long getScFwdDir()
-    {
+    /**
+     * The bit for forward direction
+     */
+    public static int getScFwdDir() {
         return scFwdDir;
     }
 
     /**
-     * Returns true if flags1 can be overwritten in the edge by flags2 without restricting or
-     * changing the directions of flags1.
-     * <p>
-     * @return true if flags2 is enabled in both directions or if both flags are pointing into the
-     * same direction.
+     * The bit for backward direction
      */
-    //        \  flags2:
-    // flags1  \ -> | <- | <->
-    // ->         t | f  | t
-    // <-         f | t  | t
-    // <->        f | f  | t
-    public static final boolean canBeOverwritten( long flags1, long flags2 )
-    {
-        return (flags2 & scDirMask) == scDirMask
-                || (flags1 & scDirMask) == (flags2 & scDirMask);
+    public static int getScBwdDir() {
+        return scBwdDir;
     }
 }

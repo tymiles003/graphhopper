@@ -1,14 +1,14 @@
 /*
- *  Licensed to GraphHopper and Peter Karich under one or more contributor
- *  license agreements. See the NOTICE file distributed with this work for 
+ *  Licensed to GraphHopper GmbH under one or more contributor
+ *  license agreements. See the NOTICE file distributed with this work for
  *  additional information regarding copyright ownership.
- * 
- *  GraphHopper licenses this file to you under the Apache License, 
- *  Version 2.0 (the "License"); you may not use this file except in 
+ *
+ *  GraphHopper GmbH licenses this file to you under the Apache License,
+ *  Version 2.0 (the "License"); you may not use this file except in
  *  compliance with the License. You may obtain a copy of the License at
- * 
+ *
  *       http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -17,213 +17,183 @@
  */
 package com.graphhopper.routing.ch;
 
-import com.graphhopper.routing.*;
-import com.graphhopper.routing.ch.PrepareContractionHierarchies.Shortcut;
+import com.carrotsearch.hppc.IntArrayList;
+import com.carrotsearch.hppc.IntIndexedContainer;
+import com.graphhopper.routing.Dijkstra;
+import com.graphhopper.routing.Path;
+import com.graphhopper.routing.RoutingAlgorithm;
+import com.graphhopper.routing.ev.*;
+import com.graphhopper.routing.querygraph.QueryGraph;
 import com.graphhopper.routing.util.*;
-import com.graphhopper.storage.Graph;
-import com.graphhopper.storage.LevelGraph;
-import com.graphhopper.storage.LevelGraphStorage;
-import com.graphhopper.storage.GraphBuilder;
+import com.graphhopper.routing.weighting.SpeedWeighting;
+import com.graphhopper.routing.weighting.Weighting;
+import com.graphhopper.storage.*;
+import com.graphhopper.storage.index.Snap;
 import com.graphhopper.util.*;
-import java.util.Collection;
-import java.util.Iterator;
-import static org.junit.Assert.*;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import java.util.Random;
+
+import static com.graphhopper.util.GHUtility.updateDistancesFor;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * @author Peter Karich
  */
-public class PrepareContractionHierarchiesTest
-{
-    private final EncodingManager encodingManager = new EncodingManager("CAR");
-    private final CarFlagEncoder carEncoder = (CarFlagEncoder) encodingManager.getEncoder("CAR");
-    private final Weighting weighting = new ShortestWeighting();
-    private final TraversalMode tMode = TraversalMode.NODE_BASED;
+public class PrepareContractionHierarchiesTest {
+    private final DecimalEncodedValue speedEnc = new DecimalEncodedValueImpl("speed", 5, 5, true);
+    private final EncodingManager encodingManager = EncodingManager.start().add(speedEnc).build();
+    private final Weighting weighting = new SpeedWeighting(speedEnc);
+    private final CHConfig chConfig = CHConfig.nodeBased("c", weighting);
+    private BaseGraph g;
 
-    LevelGraph createGraph()
-    {
-        return new GraphBuilder(encodingManager).levelGraphCreate();
+    // 0-1-.....-9-10
+    // |         ^   \
+    // |         |    |
+    // 17-16-...-11<-/
+    private static void initDirected2(Graph g, DecimalEncodedValue speedEnc) {
+        g.edge(0, 1).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(1, 2).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(2, 3).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(3, 4).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(4, 5).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(5, 6).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(6, 7).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(7, 8).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(8, 9).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(9, 10).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(10, 11).setDistance(100).set(speedEnc, 60, 0);
+        g.edge(11, 12).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(11, 9).setDistance(300).set(speedEnc, 60, 0);
+        g.edge(12, 13).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(13, 14).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(14, 15).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(15, 16).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(16, 17).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(17, 0).setDistance(100).set(speedEnc, 60, 60);
     }
 
-    LevelGraph createExampleGraph()
-    {
-        LevelGraph g = createGraph();
+    // prepare-routing.svg
+    private static void initShortcutsGraph(Graph g, DecimalEncodedValue speedEnc) {
+        g.edge(0, 1).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(0, 2).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(1, 2).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(2, 3).setDistance(150).set(speedEnc, 60, 60);
+        g.edge(1, 4).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(2, 9).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(9, 3).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(10, 3).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(4, 5).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(5, 6).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(6, 7).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(7, 8).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(8, 9).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(4, 11).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(9, 14).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(10, 14).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(11, 12).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(12, 15).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(12, 13).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(13, 16).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(15, 16).setDistance(200).set(speedEnc, 60, 60);
+        g.edge(14, 16).setDistance(100).set(speedEnc, 60, 60);
+    }
 
+    private static void initExampleGraph(Graph g, DecimalEncodedValue speedEnc) {
         //5-1-----2
         //   \ __/|
         //    0   |
         //   /    |
         //  4-----3
         //
-        g.edge(0, 1, 1, true);
-        g.edge(0, 2, 1, true);
-        g.edge(0, 4, 3, true);
-        g.edge(1, 2, 2, true);
-        g.edge(2, 3, 1, true);
-        g.edge(4, 3, 2, true);
-        g.edge(5, 1, 2, true);
-        return g;
+        g.edge(0, 1).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(0, 2).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(0, 4).setDistance(300).set(speedEnc, 60, 60);
+        g.edge(1, 2).setDistance(300).set(speedEnc, 60, 60);
+        g.edge(2, 3).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(4, 3).setDistance(200).set(speedEnc, 60, 60);
+        g.edge(5, 1).setDistance(200).set(speedEnc, 60, 60);
+    }
+
+    @BeforeEach
+    public void setUp() {
+        g = createGraph();
+    }
+
+    private BaseGraph createGraph() {
+        return new BaseGraph.Builder(encodingManager).create();
     }
 
     @Test
-    public void testShortestPathSkipNode()
-    {
-        LevelGraph g = createExampleGraph();
-        double normalDist = new Dijkstra(g, carEncoder, weighting, tMode).calcPath(4, 2).getDistance();
-        DijkstraOneToMany algo = new DijkstraOneToMany(g, carEncoder, weighting, tMode);
-        PrepareContractionHierarchies prepare = new PrepareContractionHierarchies(g, carEncoder, weighting, tMode);
-        prepare.initFromGraph().prepareNodes();
-        algo.setEdgeFilter(new PrepareContractionHierarchies.IgnoreNodeFilter(g, g.getNodes() + 1).setAvoidNode(3));
-        algo.setWeightLimit(100);
-        int nodeEntry = algo.findEndNode(4, 2);
-        assertTrue(algo.getWeight(nodeEntry) > normalDist);
-
-        algo.clear();
-        nodeEntry = algo.setLimitVisitedNodes(1).findEndNode(4, 2);
-        assertEquals(-1, nodeEntry);
-    }
-
-    @Test
-    public void testShortestPathSkipNode2()
-    {
-        LevelGraph g = createExampleGraph();
-        double normalDist = new Dijkstra(g, carEncoder, weighting, tMode).calcPath(4, 2).getDistance();
-        assertEquals(3, normalDist, 1e-5);
-        DijkstraOneToMany algo = new DijkstraOneToMany(g, carEncoder, weighting, tMode);
-        PrepareContractionHierarchies prepare = new PrepareContractionHierarchies(g, carEncoder, weighting, tMode);
-        prepare.initFromGraph().prepareNodes();
-        algo.setEdgeFilter(new PrepareContractionHierarchies.IgnoreNodeFilter(g, g.getNodes() + 1).setAvoidNode(3));
-        algo.setWeightLimit(10);
-        int nodeEntry = algo.findEndNode(4, 2);
-        assertEquals(4, algo.getWeight(nodeEntry), 1e-5);
-
-        nodeEntry = algo.findEndNode(4, 1);
-        assertEquals(4, algo.getWeight(nodeEntry), 1e-5);
-    }
-
-    @Test
-    public void testShortestPathLimit()
-    {
-        LevelGraph g = createExampleGraph();
-        DijkstraOneToMany algo = new DijkstraOneToMany(g, carEncoder, weighting, tMode);
-        PrepareContractionHierarchies prepare = new PrepareContractionHierarchies(g, carEncoder, weighting, tMode);
-        prepare.initFromGraph().prepareNodes();
-        algo.setEdgeFilter(new PrepareContractionHierarchies.IgnoreNodeFilter(g, g.getNodes() + 1).setAvoidNode(0));
-        algo.setWeightLimit(2);
-        int endNode = algo.findEndNode(4, 1);
-        // did not reach endNode
-        assertNotEquals(1, endNode);
-    }
-
-    @Test
-    public void testAddShortcuts()
-    {
-        LevelGraph g = createExampleGraph();
-        int old = g.getAllEdges().getCount();
-        PrepareContractionHierarchies prepare = new PrepareContractionHierarchies(g, carEncoder, weighting, tMode);
+    public void testReturnsCorrectWeighting() {
+        PrepareContractionHierarchies prepare = createPrepareContractionHierarchies(g);
         prepare.doWork();
-        assertEquals(old + 1, g.getAllEdges().getCount());
+        assertSame(weighting, prepare.getCHConfig().getWeighting());
     }
 
     @Test
-    public void testMoreComplexGraph()
-    {
-        LevelGraph g = initShortcutsGraph(createGraph());
-        int old = g.getAllEdges().getCount();
-        PrepareContractionHierarchies prepare = new PrepareContractionHierarchies(g, carEncoder, weighting, tMode);
-        prepare.doWork();
-        assertEquals(old + 10, g.getAllEdges().getCount());
+    public void testAddShortcuts() {
+        initExampleGraph(g, speedEnc);
+        PrepareContractionHierarchies prepare = createPrepareContractionHierarchies(g);
+        useNodeOrdering(prepare, new int[]{5, 3, 4, 0, 1, 2});
+        PrepareContractionHierarchies.Result res = prepare.doWork();
+        assertEquals(2, res.getShortcuts());
     }
 
     @Test
-    public void testDirectedGraph()
-    {
-        LevelGraph g = createGraph();
-        g.edge(5, 4, 3, false);
-        g.edge(4, 5, 10, false);
-        g.edge(2, 4, 1, false);
-        g.edge(5, 2, 1, false);
-        g.edge(3, 5, 1, false);
-        g.edge(4, 3, 1, false);
-        int old = GHUtility.count(g.getAllEdges());
-        PrepareContractionHierarchies prepare = new PrepareContractionHierarchies(g, carEncoder, weighting, tMode);
-        prepare.doWork();
-        assertEquals(old + 2, GHUtility.count(g.getAllEdges()));
-        RoutingAlgorithm algo = prepare.createAlgo(g, new AlgorithmOptions(AlgorithmOptions.DIJKSTRA_BI, carEncoder, weighting, tMode));
+    public void testMoreComplexGraph() {
+        initShortcutsGraph(g, speedEnc);
+        PrepareContractionHierarchies prepare = createPrepareContractionHierarchies(g);
+        useNodeOrdering(prepare, new int[]{0, 5, 6, 7, 8, 10, 11, 13, 15, 1, 3, 9, 14, 16, 12, 4, 2});
+        PrepareContractionHierarchies.Result res = prepare.doWork();
+        assertEquals(7, res.getShortcuts());
+    }
+
+    @Test
+    public void testDirectedGraph() {
+        g.edge(5, 4).setDistance(300).set(speedEnc, 60, 0);
+        g.edge(4, 5).setDistance(1000).set(speedEnc, 60, 0);
+        g.edge(2, 4).setDistance(100).set(speedEnc, 60, 0);
+        g.edge(5, 2).setDistance(100).set(speedEnc, 60, 0);
+        g.edge(3, 5).setDistance(100).set(speedEnc, 60, 0);
+        g.edge(4, 3).setDistance(100).set(speedEnc, 60, 0);
+        g.freeze();
+        assertEquals(6, g.getEdges());
+        PrepareContractionHierarchies prepare = createPrepareContractionHierarchies(g);
+        PrepareContractionHierarchies.Result result = prepare.doWork();
+        assertEquals(2, result.getShortcuts());
+        RoutingCHGraph routingCHGraph = RoutingCHGraphImpl.fromGraph(g, result.getCHStorage(), result.getCHConfig());
+        assertEquals(6 + 2, routingCHGraph.getEdges());
+        RoutingAlgorithm algo = new CHRoutingAlgorithmFactory(routingCHGraph).createAlgo(new PMap());
         Path p = algo.calcPath(4, 2);
-        assertEquals(3, p.getDistance(), 1e-6);
-        assertEquals(Helper.createTList(4, 3, 5, 2), p.calcNodes());
+        assertEquals(300, p.getDistance(), 1e-6);
+        assertEquals(IntArrayList.from(4, 3, 5, 2), p.calcNodes());
     }
 
     @Test
-    public void testDirectedGraph2()
-    {
-        LevelGraph g = createGraph();
-        initDirected2(g);
-        int old = GHUtility.count(g.getAllEdges());
-        PrepareContractionHierarchies prepare = new PrepareContractionHierarchies(g, carEncoder, weighting, tMode);
-        prepare.doWork();
-        // PrepareTowerNodesShortcutsTest.printEdges(g);
-        assertEquals(old + 9, GHUtility.count(g.getAllEdges()));
-        RoutingAlgorithm algo = prepare.createAlgo(g, new AlgorithmOptions(AlgorithmOptions.DIJKSTRA_BI, carEncoder, weighting, tMode));
+    public void testDirectedGraph2() {
+        initDirected2(g, speedEnc);
+        int oldCount = g.getEdges();
+        assertEquals(19, oldCount);
+        PrepareContractionHierarchies prepare = createPrepareContractionHierarchies(g);
+        useNodeOrdering(prepare, new int[]{10, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 17, 11, 12, 13, 14, 15, 16});
+        PrepareContractionHierarchies.Result result = prepare.doWork();
+        assertEquals(oldCount, g.getEdges());
+        assertEquals(oldCount, GHUtility.count(g.getAllEdges()));
+
+        long numShortcuts = 9;
+        assertEquals(numShortcuts, result.getShortcuts());
+        assertEquals(oldCount, g.getEdges());
+        RoutingCHGraph routingCHGraph = RoutingCHGraphImpl.fromGraph(g, result.getCHStorage(), result.getCHConfig());
+        assertEquals(oldCount + numShortcuts, routingCHGraph.getEdges());
+        RoutingAlgorithm algo = new CHRoutingAlgorithmFactory(routingCHGraph).createAlgo(new PMap());
         Path p = algo.calcPath(0, 10);
-        assertEquals(10, p.getDistance(), 1e-6);
-        assertEquals(Helper.createTList(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10), p.calcNodes());
+        assertEquals(1000, p.getDistance(), 1e-6);
+        assertEquals(IntArrayList.from(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10), p.calcNodes());
     }
 
-    @Test
-    public void testDirectedGraph3()
-    {
-        LevelGraph g = createGraph();
-        //5 6 7
-        // \|/
-        //4-3_1<-
-        //    \_|_10
-        //   0__2_11
-
-        g.edge(0, 2, 2, true);
-        g.edge(10, 2, 2, true);
-        g.edge(11, 2, 2, true);
-        // create a longer one directional edge => no longish one-dir shortcut should be created        
-        g.edge(2, 1, 2, true);
-        g.edge(2, 1, 10, false);
-
-        g.edge(1, 3, 2, true);
-        g.edge(3, 4, 2, true);
-        g.edge(3, 5, 2, true);
-        g.edge(3, 6, 2, true);
-        g.edge(3, 7, 2, true);
-
-        PrepareContractionHierarchies prepare = new PrepareContractionHierarchies(g, carEncoder, weighting, tMode);
-        prepare.initFromGraph();
-        prepare.prepareNodes();
-        // find all shortcuts if we contract node 1
-        Collection<Shortcut> scs = prepare.testFindShortcuts(1);
-        assertEquals(2, scs.size());
-        Iterator<Shortcut> iter = scs.iterator();
-        Shortcut sc1 = iter.next();
-        Shortcut sc2 = iter.next();
-        if (sc1.weight > sc2.weight)
-        {
-            Shortcut tmp = sc1;
-            sc1 = sc2;
-            sc2 = tmp;
-        }
-
-        // both dirs
-        assertTrue(sc1.toString(), sc1.from == 3 && sc1.to == 2);
-        assertTrue(sc1.toString(), carEncoder.isForward(sc1.flags) && carEncoder.isBackward(sc1.flags));
-
-        // directed
-        assertTrue(sc2.toString(), sc2.from == 2 && sc2.to == 3);
-        assertTrue(sc2.toString(), carEncoder.isForward(sc2.flags));
-
-        assertEquals(sc1.toString(), 4, sc1.weight, 1e-4);
-        assertEquals(sc2.toString(), 12, sc2.weight, 1e-4);
-    }
-
-    void initRoundaboutGraph( Graph g )
-    {
+    private static void initRoundaboutGraph(Graph g, DecimalEncodedValue speedEnc) {
         //              roundabout:
         //16-0-9-10--11   12<-13
         //    \       \  /      \
@@ -231,329 +201,397 @@ public class PrepareContractionHierarchiesTest
         // -15-1--2--3--4       /     /
         //     /         \-5->6/     /
         //  -14            \________/
+        g.edge(16, 0).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(0, 9).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(0, 17).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(9, 10).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(10, 11).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(11, 28).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(28, 29).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(29, 30).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(30, 31).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(31, 4).setDistance(100).set(speedEnc, 60, 60);
 
-        g.edge(16, 0, 1, true);
-        g.edge(0, 9, 1, true);
-        g.edge(0, 17, 1, true);
-        g.edge(9, 10, 1, true);
-        g.edge(10, 11, 1, true);
-        g.edge(11, 28, 1, true);
-        g.edge(28, 29, 1, true);
-        g.edge(29, 30, 1, true);
-        g.edge(30, 31, 1, true);
-        g.edge(31, 4, 1, true);
+        g.edge(17, 1).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(15, 1).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(14, 1).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(14, 18).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(18, 19).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(19, 20).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(20, 15).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(19, 21).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(21, 16).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(1, 2).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(2, 3).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(3, 4).setDistance(100).set(speedEnc, 60, 60);
 
-        g.edge(17, 1, 1, true);
-        g.edge(15, 1, 1, true);
-        g.edge(14, 1, 1, true);
-        g.edge(14, 18, 1, true);
-        g.edge(18, 19, 1, true);
-        g.edge(19, 20, 1, true);
-        g.edge(20, 15, 1, true);
-        g.edge(19, 21, 1, true);
-        g.edge(21, 16, 1, true);
-        g.edge(1, 2, 1, true);
-        g.edge(2, 3, 1, true);
-        g.edge(3, 4, 1, true);
+        g.edge(4, 5).setDistance(100).set(speedEnc, 60, 0);
+        g.edge(5, 6).setDistance(100).set(speedEnc, 60, 0);
+        g.edge(6, 7).setDistance(100).set(speedEnc, 60, 0);
+        g.edge(7, 13).setDistance(100).set(speedEnc, 60, 0);
+        g.edge(13, 12).setDistance(100).set(speedEnc, 60, 0);
+        g.edge(12, 4).setDistance(100).set(speedEnc, 60, 0);
 
-        g.edge(4, 5, 1, false);
-        g.edge(5, 6, 1, false);
-        g.edge(6, 7, 1, false);
-        g.edge(7, 13, 1, false);
-        g.edge(13, 12, 1, false);
-        g.edge(12, 4, 1, false);
-
-        g.edge(7, 8, 1, true);
-        g.edge(8, 22, 1, true);
-        g.edge(22, 23, 1, true);
-        g.edge(23, 24, 1, true);
-        g.edge(24, 25, 1, true);
-        g.edge(25, 27, 1, true);
-        g.edge(27, 5, 1, true);
-        g.edge(25, 26, 1, false);
-        g.edge(26, 25, 1, false);
+        g.edge(7, 8).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(8, 22).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(22, 23).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(23, 24).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(24, 25).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(25, 27).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(27, 5).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(25, 26).setDistance(100).set(speedEnc, 60, 0);
+        g.edge(26, 25).setDistance(100).set(speedEnc, 60, 0);
     }
 
     @Test
-    public void testRoundaboutUnpacking()
-    {
-        LevelGraph g = createGraph();
-        initRoundaboutGraph(g);
-        int old = g.getAllEdges().getCount();
-        PrepareContractionHierarchies prepare = new PrepareContractionHierarchies(g, carEncoder, weighting, tMode);
-        prepare.doWork();
-        assertEquals(old + 22, g.getAllEdges().getCount());
-        RoutingAlgorithm algo = prepare.createAlgo(g, new AlgorithmOptions(AlgorithmOptions.DIJKSTRA_BI, carEncoder, weighting, tMode));
+    public void testRoundaboutUnpacking() {
+        initRoundaboutGraph(g, speedEnc);
+        int oldCount = g.getEdges();
+        PrepareContractionHierarchies prepare = createPrepareContractionHierarchies(g);
+        useNodeOrdering(prepare, new int[]{26, 6, 12, 13, 2, 3, 8, 9, 10, 11, 14, 15, 16, 17, 18, 20, 21, 23, 24, 25, 19, 22, 27, 5, 29, 30, 31, 28, 7, 1, 0, 4});
+        PrepareContractionHierarchies.Result res = prepare.doWork();
+        assertEquals(oldCount, g.getEdges());
+        RoutingCHGraph routingCHGraph = RoutingCHGraphImpl.fromGraph(g, res.getCHStorage(), res.getCHConfig());
+        assertEquals(oldCount, routingCHGraph.getBaseGraph().getEdges());
+        assertEquals(oldCount + 23, routingCHGraph.getEdges());
+        RoutingAlgorithm algo = new CHRoutingAlgorithmFactory(routingCHGraph).createAlgo(new PMap());
         Path p = algo.calcPath(4, 7);
-        assertEquals(Helper.createTList(4, 5, 6, 7), p.calcNodes());
+        assertEquals(IntArrayList.from(4, 5, 6, 7), p.calcNodes());
     }
 
     @Test
-    public void testFindShortcuts_Roundabout()
-    {
-        LevelGraphStorage g = (LevelGraphStorage) createGraph();
-        EdgeIteratorState iter1_1 = g.edge(1, 3, 1, true);
-        EdgeIteratorState iter1_2 = g.edge(3, 4, 1, true);
-        EdgeIteratorState iter2_1 = g.edge(4, 5, 1, false);
-        EdgeIteratorState iter2_2 = g.edge(5, 6, 1, false);
-        EdgeIteratorState iter3_1 = g.edge(6, 7, 1, true);
-        EdgeIteratorState iter3_2 = g.edge(6, 8, 2, false);
-        g.edge(8, 4, 1, false);
+    public void testDisconnects() {
+        //            4
+        //            v
+        //            0
+        //            v
+        //  8 -> 3 -> 6 -> 1 -> 5
+        //            v
+        //            2
+        //            v
+        //            7
+        g.edge(8, 3).setDistance(100).set(speedEnc, 60, 0);
+        g.edge(3, 6).setDistance(100).set(speedEnc, 60, 0);
+        g.edge(6, 1).setDistance(100).set(speedEnc, 60, 0);
+        g.edge(1, 5).setDistance(100).set(speedEnc, 60, 0);
+        g.edge(4, 0).setDistance(100).set(speedEnc, 60, 0);
+        g.edge(0, 6).setDistance(100).set(speedEnc, 60, 0);
+        g.edge(6, 2).setDistance(100).set(speedEnc, 60, 0);
+        g.edge(2, 7).setDistance(100).set(speedEnc, 60, 0);
+        g.freeze();
 
-        PrepareContractionHierarchies prepare = new PrepareContractionHierarchies(g, carEncoder, weighting, tMode);
-        EdgeSkipIterState tmp = g.shortcut(1, 4);
-        tmp.setFlags(PrepareEncoder.getScDirMask());
-        tmp.setWeight(2);
-        tmp.setSkippedEdges(iter1_1.getEdge(), iter1_2.getEdge());
-        long f = PrepareEncoder.getScFwdDir();
-        tmp = g.shortcut(4, 6);
-        tmp.setFlags(f);
-        tmp.setWeight(2);
-        tmp.setSkippedEdges(iter2_1.getEdge(), iter2_2.getEdge());
-        tmp = g.shortcut(6, 4);
-        tmp.setFlags(f);
-        tmp.setWeight(3);
-        tmp.setSkippedEdges(iter3_1.getEdge(), iter3_2.getEdge());
-
-        prepare.initFromGraph();
-        prepare.prepareNodes();
-        g.setLevel(3, 3);
-        g.setLevel(5, 5);
-        g.setLevel(7, 7);
-        g.setLevel(8, 8);
-
-        // there should be two different shortcuts for both directions!
-        Collection<Shortcut> sc = prepare.testFindShortcuts(4);
-        assertEquals(2, sc.size());
+        PrepareContractionHierarchies prepare = createPrepareContractionHierarchies(g)
+                .useFixedNodeOrdering(NodeOrderingProvider.identity(g.getNodes()));
+        PrepareContractionHierarchies.Result res = prepare.doWork();
+        RoutingCHGraph routingCHGraph = RoutingCHGraphImpl.fromGraph(g, res.getCHStorage(), res.getCHConfig());
+        RoutingCHEdgeExplorer outExplorer = routingCHGraph.createOutEdgeExplorer();
+        RoutingCHEdgeExplorer inExplorer = routingCHGraph.createInEdgeExplorer();
+        // shortcuts leading to or coming from lower level nodes are not visible
+        // so far we still receive base graph edges leading to or coming from lower level nodes though
+        assertEquals(IntArrayList.from(7, 2, 1), getAdjs(outExplorer.setBaseNode(6)));
+        assertEquals(IntArrayList.from(8, 0, 3), getAdjs(inExplorer.setBaseNode(6)));
+        assertEquals(IntArrayList.from(6, 0), getAdjs(outExplorer.setBaseNode(4)));
+        assertEquals(IntArrayList.from(6, 1), getAdjs(inExplorer.setBaseNode(5)));
+        assertEquals(IntArrayList.from(8, 2), getAdjs(inExplorer.setBaseNode(7)));
+        assertEquals(IntArrayList.from(3), getAdjs(outExplorer.setBaseNode(8)));
+        assertEquals(IntArrayList.from(), getAdjs(inExplorer.setBaseNode(8)));
     }
 
-    void initUnpackingGraph( LevelGraphStorage g, Weighting w )
-    {
-        final long flags = carEncoder.setProperties(30, true, false);
-        double dist = 1;
-        g.edge(10, 0).setDistance(dist).setFlags(flags);
-        EdgeIteratorState iterTmp1 = g.edge(0, 1);
-        iterTmp1.setDistance(dist).setFlags(flags);
-        EdgeIteratorState iter2 = g.edge(1, 2).setDistance(dist).setFlags(flags);
-        EdgeIteratorState iter3 = g.edge(2, 3).setDistance(dist).setFlags(flags);
-        EdgeIteratorState iter4 = g.edge(3, 4).setDistance(dist).setFlags(flags);
-        EdgeIteratorState iter5 = g.edge(4, 5).setDistance(dist).setFlags(flags);
-        EdgeIteratorState iter6 = g.edge(5, 6).setDistance(dist).setFlags(flags);
-        long oneDirFlags = PrepareEncoder.getScFwdDir();
-
-        int tmp = iterTmp1.getEdge();
-        EdgeSkipIterState sc1 = g.shortcut(0, 2);
-        int x = EdgeIterator.NO_EDGE;
-        sc1.setWeight(w.calcWeight(iterTmp1, false, x) + w.calcWeight(iter2, false, x)).setDistance(2 * dist).setFlags(oneDirFlags);
-        sc1.setSkippedEdges(tmp, iter2.getEdge());
-        tmp = sc1.getEdge();
-        EdgeSkipIterState sc2 = g.shortcut(0, 3);
-        sc2.setWeight(w.calcWeight(sc1, false, x) + w.calcWeight(iter3, false, x)).setDistance(3 * dist).setFlags(oneDirFlags);
-        sc2.setSkippedEdges(tmp, iter3.getEdge());
-        tmp = sc2.getEdge();
-        sc1 = g.shortcut(0, 4);
-        sc1.setWeight(w.calcWeight(sc2, false, x) + w.calcWeight(iter4, false, x)).setDistance(4).setFlags(oneDirFlags);
-        sc1.setSkippedEdges(tmp, iter4.getEdge());
-        tmp = sc1.getEdge();
-        sc2 = g.shortcut(0, 5);
-        sc2.setWeight(w.calcWeight(sc1, false, x) + w.calcWeight(iter5, false, x)).setDistance(5).setFlags(oneDirFlags);
-        sc2.setSkippedEdges(tmp, iter5.getEdge());
-        tmp = sc2.getEdge();
-        sc1 = g.shortcut(0, 6);
-        sc1.setWeight(w.calcWeight(sc2, false, x) + w.calcWeight(iter6, false, x)).setDistance(6).setFlags(oneDirFlags);
-        sc1.setSkippedEdges(tmp, iter6.getEdge());
-        g.setLevel(0, 10);
-        g.setLevel(6, 9);
-        g.setLevel(5, 8);
-        g.setLevel(4, 7);
-        g.setLevel(3, 6);
-        g.setLevel(2, 5);
-        g.setLevel(1, 4);
-        g.setLevel(10, 3);
+    private IntArrayList getAdjs(RoutingCHEdgeIterator iter) {
+        IntArrayList result = new IntArrayList();
+        while (iter.next())
+            result.add(iter.getAdjNode());
+        return result;
     }
 
     @Test
-    public void testUnpackingOrder()
-    {
-        LevelGraphStorage g = (LevelGraphStorage) createGraph();
-        initUnpackingGraph(g, weighting);
-        PrepareContractionHierarchies prepare = new PrepareContractionHierarchies(g, carEncoder, weighting, tMode);
-        RoutingAlgorithm algo = prepare.createAlgo(g, new AlgorithmOptions(AlgorithmOptions.DIJKSTRA_BI, carEncoder, weighting, tMode));
-        Path p = algo.calcPath(10, 6);
-        assertEquals(7, p.getDistance(), 1e-5);
-        assertEquals(Helper.createTList(10, 0, 1, 2, 3, 4, 5, 6), p.calcNodes());
+    public void testStallOnDemandViaVirtuaNode_issue1574() {
+        // this test reproduces the issue that appeared in issue1574
+        // the problem is very intricate and a combination of all these things:
+        // * contraction hierarchies
+        // * stall-on-demand (without sod there is no problem, at least in this test)
+        // * shortcuts weight rounding (now gone)
+        // * via nodes/virtual edges and the associated weight precision (without virtual nodes between source and target
+        //   there is no problem, but this can happen for via routes)
+        // * the fact that the CHLevelEdgeFilter always accepts virtual nodes
+        // here we will construct a special case where a connection is not found without the fix in #1574.
+
+        DecimalEncodedValue speedEnc = new DecimalEncodedValueImpl("speed", 5, 5, true);
+        EncodingManager encodingManager = EncodingManager.start().add(speedEnc).build();
+        BaseGraph g = new BaseGraph.Builder(encodingManager).create();
+        // note: we changed the weighting during some refactorings, so if this test is no longer testing what
+        //       it is supposed to test maybe that's why.
+        Weighting weighting = new SpeedWeighting(speedEnc);
+        CHConfig chConfig = CHConfig.nodeBased("c", weighting);
+        // the following graph reproduces the issue. note that we will use the node ids as ch levels, so there will
+        // be a shortcut 3->2 visible at node 2 and another one 3->4 visible at node 3.
+        // we will fine-tune the edge-speeds such that without the fix node 4 will be stalled and node 5 will not get
+        // discovered. consequently, no path will be found, because only the forward search runs (from 0 to 7 the
+        // shortest path is strictly upward). node 4 is only stalled when node 2 gets stalled before, which in turn will
+        // happen due to the virtual node between 3 and 1.
+        //
+        // start 0 - 3 - x - 1 - 2
+        //             \         |
+        //               sc ---- 4 - 5 - 6 - 7 finish
+        g.edge(0, 3).setDistance(0).set(speedEnc, 60, 60);
+        EdgeIteratorState edge31 = g.edge(3, 1).setDistance(0).set(speedEnc, 60, 60);
+        g.edge(1, 2).setDistance(0).set(speedEnc, 60, 60);
+        EdgeIteratorState edge24 = g.edge(2, 4).setDistance(0).set(speedEnc, 60, 60);
+        g.edge(4, 5).setDistance(0).set(speedEnc, 60, 60);
+        g.edge(5, 6).setDistance(0).set(speedEnc, 60, 60);
+        g.edge(6, 7).setDistance(0).set(speedEnc, 60, 60);
+        updateDistancesFor(g, 0, 0.001, 0.0000);
+        updateDistancesFor(g, 3, 0.001, 0.0001);
+        updateDistancesFor(g, 1, 0.001, 0.0002);
+        updateDistancesFor(g, 2, 0.001, 0.0003);
+        updateDistancesFor(g, 4, 0.000, 0.0003);
+        updateDistancesFor(g, 5, 0.000, 0.0004);
+        updateDistancesFor(g, 6, 0.000, 0.0005);
+        updateDistancesFor(g, 7, 0.000, 0.0006);
+
+        // we use the speed to fine tune some weights:
+        // the weight of edge 3-1 is chosen such that node 2 gets stalled in the forward search via the incoming shortcut
+        // at node 2 coming from 3. this happens because due to the virtual node x between 3 and 1, the weight of the
+        // spt entry at 2 is different to the sum of the weights of the spt entry at node 3 and the shortcut edge. this
+        // is (no: was!) due to different floating point rounding arithmetic of shortcuts and virtual edges on the query graph.
+        edge31.set(speedEnc, 12, 12);
+
+        // just stalling node 2 alone would not lead to connection not found, because the shortcut 3-4 still finds node
+        // 4. however, we can choose the weight of edge 2-4 such that node 4 also gets stalled via node 2.
+        // it is important that node 2 gets stalled before otherwise node 4 would have already be discovered.
+        // note that without the virtual node between 3 and 1 node 2 would not even be explored in the forward search,
+        // but because of the virtual node the strict upward search is modified and goes like 0-3-x-1-2.
+        edge24.set(speedEnc, 27.5, 27.5);
+
+        // prepare ch, use node ids as levels
+        PrepareContractionHierarchies pch = createPrepareContractionHierarchies(g, chConfig);
+        PrepareContractionHierarchies.Result res = pch.useFixedNodeOrdering(NodeOrderingProvider.identity(g.getNodes())).doWork();
+        RoutingCHGraph routingCHGraph = RoutingCHGraphImpl.fromGraph(g, res.getCHStorage(), res.getCHConfig());
+        assertEquals(2, routingCHGraph.getEdges() - g.getEdges(), "there should be exactly two (bidirectional) shortcuts (2-3) and (3-4)");
+
+        // insert virtual node and edges
+        Snap snap = new Snap(0.001, 0.00015); // between 3 and 1
+        snap.setClosestEdge(edge31);
+        snap.setSnappedPosition(Snap.Position.EDGE);
+        snap.setClosestNode(8);
+        snap.setWayIndex(0);
+        snap.calcSnappedPoint(new DistanceCalcEuclidean());
+
+        QueryGraph queryGraph = QueryGraph.create(g, snap);
+
+        // we used to make sure our weight fine tunings do what they were supposed to do, but since we got rid of shortcut weight rounding altogether this no longer makes sense
+        Path path = new CHRoutingAlgorithmFactory(routingCHGraph, queryGraph).createAlgo(new PMap()).calcPath(0, 7);
+        assertEquals(IntArrayList.from(0, 3, 1, 2, 4, 5, 6, 7), path.calcNodes(), "wrong or no path found");
+    }
+
+    private double getWeight(Graph graph, Weighting w, int from, int to) {
+        return w.calcEdgeWeight(getEdge(graph, from, to), false);
+    }
+
+    private EdgeIteratorState getEdge(Graph graph, int from, int to) {
+        EdgeIterator iter = graph.createEdgeExplorer().setBaseNode(from);
+        while (iter.next()) {
+            if (iter.getAdjNode() == to) {
+                return iter;
+            }
+        }
+        throw new IllegalArgumentException("Could not find edge from: " + from + " to: " + to);
+    }
+
+    private RoutingCHEdgeIteratorState getEdge(RoutingCHGraph graph, int from, int to, boolean incoming) {
+        RoutingCHEdgeIterator iter = incoming ?
+                graph.createInEdgeExplorer().setBaseNode(from) :
+                graph.createOutEdgeExplorer().setBaseNode(from);
+        while (iter.next())
+            if (iter.getAdjNode() == to)
+                return iter;
+        throw new IllegalArgumentException("Could not find edge from: " + from + " to: " + to);
     }
 
     @Test
-    public void testUnpackingOrder_Fastest()
-    {
-        LevelGraphStorage g = (LevelGraphStorage) createGraph();
-        Weighting w = new FastestWeighting(carEncoder);
-        initUnpackingGraph(g, w);
-
-        PrepareContractionHierarchies prepare = new PrepareContractionHierarchies(g, carEncoder, weighting, tMode);
-        RoutingAlgorithm algo = prepare.createAlgo(g, new AlgorithmOptions(AlgorithmOptions.DIJKSTRA_BI, carEncoder, weighting, tMode));
-        Path p = algo.calcPath(10, 6);
-        assertEquals(7, p.getDistance(), 1e-1);
-        assertEquals(Helper.createTList(10, 0, 1, 2, 3, 4, 5, 6), p.calcNodes());
-    }
-
-    @Test
-    public void testCircleBug()
-    {
-        LevelGraph g = createGraph();
+    public void testCircleBug() {
         //  /--1
         // -0--/
         //  |
-        g.edge(0, 1, 10, true);
-        g.edge(0, 1, 4, true);
-        g.edge(0, 2, 10, true);
-        g.edge(0, 3, 10, true);
-        PrepareContractionHierarchies prepare = new PrepareContractionHierarchies(g, carEncoder, weighting, tMode);
-        prepare.doWork();
-        assertEquals(0, prepare.getShortcuts());
+        g.edge(0, 1).setDistance(1000).set(speedEnc, 60, 60);
+        g.edge(0, 1).setDistance(400).set(speedEnc, 60, 60);
+        g.edge(0, 2).setDistance(1000).set(speedEnc, 60, 60);
+        g.edge(0, 3).setDistance(1000).set(speedEnc, 60, 60);
+        PrepareContractionHierarchies prepare = createPrepareContractionHierarchies(g);
+        PrepareContractionHierarchies.Result result = prepare.doWork();
+        assertEquals(0, result.getShortcuts());
     }
 
     @Test
-    public void testBug178()
-    {
+    public void testBug178() {
         // 5--------6__
         // |        |  \
         // 0-1->-2--3--4
         //   \-<-/
         //
-        LevelGraph g = createGraph();
-        g.edge(1, 2, 1, false);
-        g.edge(2, 1, 1, false);
+        g.edge(1, 2).setDistance(100).set(speedEnc, 60, 0);
+        g.edge(2, 1).setDistance(100).set(speedEnc, 60, 0);
 
-        g.edge(5, 0, 1, true);
-        g.edge(5, 6, 1, true);
-        g.edge(0, 1, 1, true);
-        g.edge(2, 3, 1, true);
-        g.edge(3, 4, 1, true);
-        g.edge(6, 3, 1, true);
+        g.edge(5, 0).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(5, 6).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(0, 1).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(2, 3).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(3, 4).setDistance(100).set(speedEnc, 60, 60);
+        g.edge(6, 3).setDistance(100).set(speedEnc, 60, 60);
 
-        PrepareContractionHierarchies prepare = new PrepareContractionHierarchies(g, carEncoder, weighting, tMode);
-        prepare.doWork();
-        assertEquals(2, prepare.getShortcuts());
+        PrepareContractionHierarchies prepare = createPrepareContractionHierarchies(g);
+        useNodeOrdering(prepare, new int[]{4, 1, 2, 0, 5, 6, 3});
+        PrepareContractionHierarchies.Result result = prepare.doWork();
+        assertEquals(2, result.getShortcuts());
     }
 
-    // 0-1-2-3-4
-    // |     / |
-    // |    8  |
-    // \   /   /
-    //  7-6-5-/
-    void initBiGraph( Graph graph )
-    {
-        graph.edge(0, 1, 100, true);
-        graph.edge(1, 2, 1, true);
-        graph.edge(2, 3, 1, true);
-        graph.edge(3, 4, 1, true);
-        graph.edge(4, 5, 25, true);
-        graph.edge(5, 6, 25, true);
-        graph.edge(6, 7, 5, true);
-        graph.edge(7, 0, 5, true);
-        graph.edge(3, 8, 20, true);
-        graph.edge(8, 6, 20, true);
-    }
-
-    // 0-1-.....-9-10
-    // |         ^   \
-    // |         |    |
-    // 17-16-...-11<-/
-    public static void initDirected2( Graph g )
-    {
-        g.edge(0, 1, 1, true);
-        g.edge(1, 2, 1, true);
-        g.edge(2, 3, 1, true);
-        g.edge(3, 4, 1, true);
-        g.edge(4, 5, 1, true);
-        g.edge(5, 6, 1, true);
-        g.edge(6, 7, 1, true);
-        g.edge(7, 8, 1, true);
-        g.edge(8, 9, 1, true);
-        g.edge(9, 10, 1, true);
-        g.edge(10, 11, 1, false);
-        g.edge(11, 12, 1, true);
-        g.edge(11, 9, 3, false);
-        g.edge(12, 13, 1, true);
-        g.edge(13, 14, 1, true);
-        g.edge(14, 15, 1, true);
-        g.edge(15, 16, 1, true);
-        g.edge(16, 17, 1, true);
-        g.edge(17, 0, 1, true);
-    }
-
-    //       8
-    //       |
-    //    6->0->1->3->7
-    //    |        |
-    //    |        v
-    //10<-2---4<---5
-    //    9
-    public static void initDirected1( Graph g )
-    {
-        g.edge(0, 8, 1, true);
-        g.edge(0, 1, 1, false);
-        g.edge(1, 3, 1, false);
-        g.edge(3, 7, 1, false);
-        g.edge(3, 5, 1, false);
-        g.edge(5, 4, 1, false);
-        g.edge(4, 2, 1, true);
-        g.edge(2, 9, 1, false);
-        g.edge(2, 10, 1, false);
-        g.edge(2, 6, 1, true);
-        g.edge(6, 0, 1, false);
-    }
-
-    // prepare-routing.svg
-    public static LevelGraph initShortcutsGraph( LevelGraph g )
-    {
-        g.edge(0, 1, 1, true);
-        g.edge(0, 2, 1, true);
-        g.edge(1, 2, 1, true);
-        g.edge(2, 3, 1, true);
-        g.edge(1, 4, 1, true);
-        g.edge(2, 9, 1, true);
-        g.edge(9, 3, 1, true);
-        g.edge(10, 3, 1, true);
-        g.edge(4, 5, 1, true);
-        g.edge(5, 6, 1, true);
-        g.edge(6, 7, 1, true);
-        g.edge(7, 8, 1, true);
-        g.edge(8, 9, 1, true);
-        g.edge(4, 11, 1, true);
-        g.edge(9, 14, 1, true);
-        g.edge(10, 14, 1, true);
-        g.edge(11, 12, 1, true);
-        g.edge(12, 15, 1, true);
-        g.edge(12, 13, 1, true);
-        g.edge(13, 16, 1, true);
-        g.edge(15, 16, 2, true);
-        g.edge(14, 16, 1, true);
-        return g;
-    }
-
-//    public static void printEdges(LevelGraph g) {
-//        RawEdgeIterator iter = g.getAllEdges();
-//        while (iter.next()) {
-//            EdgeSkipIterator single = g.getEdgeProps(iter.edge(), iter.nodeB());
-//            System.out.println(iter.nodeA() + "<->" + iter.nodeB() + " \\"
-//                    + single.skippedEdge1() + "," + single.skippedEdge2() + " (" + iter.edge() + ")"
-//                    + ", dist: " + (float) iter.weight()
-//                    + ", level:" + g.getLevel(iter.nodeA()) + "<->" + g.getLevel(iter.nodeB())
-//                    + ", bothDir:" + CarFlagEncoder.isBoth(iter.setProperties()));
-//        }
-//        System.out.println("---");
-//    }
     @Test
-    public void testBits()
-    {
+    public void testBits() {
         int fromNode = Integer.MAX_VALUE / 3 * 2;
         int endNode = Integer.MAX_VALUE / 37 * 17;
 
         long edgeId = (long) fromNode << 32 | endNode;
-        assertEquals((BitUtil.BIG.toBitString(edgeId)),
-                BitUtil.BIG.toLastBitString(fromNode, 32) + BitUtil.BIG.toLastBitString(endNode, 32));
+        assertEquals((BitUtil.LITTLE.toBitString(edgeId)),
+                BitUtil.LITTLE.toLastBitString(fromNode, 32) + BitUtil.LITTLE.toLastBitString(endNode, 32));
     }
+
+    @Test
+    public void testMultiplePreparationsIdenticalView() {
+        DecimalEncodedValue carSpeedEnc = new DecimalEncodedValueImpl("car_speed", 5, 5, true);
+        DecimalEncodedValue bikeSpeedEnc = new DecimalEncodedValueImpl("bike_speed", 4, 2, true);
+        EncodingManager tmpEncodingManager = EncodingManager.start()
+                .add(carSpeedEnc)
+                .add(bikeSpeedEnc)
+                .build();
+
+        CHConfig carProfile = CHConfig.nodeBased("c1", new SpeedWeighting(carSpeedEnc));
+        CHConfig bikeProfile = CHConfig.nodeBased("c2", new SpeedWeighting(bikeSpeedEnc));
+
+        BaseGraph graph = new BaseGraph.Builder(tmpEncodingManager).create();
+        initShortcutsGraph(graph, carSpeedEnc);
+        AllEdgesIterator iter = graph.getAllEdges();
+        while (iter.next())
+            iter.set(bikeSpeedEnc, 18, 18);
+        graph.freeze();
+
+        checkPath(graph, carProfile, 7, 500, IntArrayList.from(3, 9, 14, 16, 13, 12), new int[]{0, 5, 6, 7, 8, 10, 11, 13, 15, 1, 3, 9, 14, 16, 12, 4, 2});
+        checkPath(graph, bikeProfile, 7, 500, IntArrayList.from(3, 9, 14, 16, 13, 12), new int[]{0, 5, 6, 7, 8, 10, 11, 13, 15, 1, 3, 9, 14, 16, 12, 4, 2});
+    }
+
+    @Test
+    public void testMultiplePreparationsDifferentView() {
+        DecimalEncodedValue carSpeedEnc = new DecimalEncodedValueImpl("car_speed", 5, 5, true);
+        DecimalEncodedValue bikeSpeedEnc = new DecimalEncodedValueImpl("bike_speed", 4, 2, true);
+        EncodingManager tmpEncodingManager = EncodingManager.start()
+                .add(carSpeedEnc)
+                .add(bikeSpeedEnc)
+                .build();
+
+        CHConfig carConfig = CHConfig.nodeBased("c1", new SpeedWeighting(carSpeedEnc));
+        CHConfig bikeConfig = CHConfig.nodeBased("c2", new SpeedWeighting(bikeSpeedEnc));
+
+        BaseGraph graph = new BaseGraph.Builder(tmpEncodingManager).create();
+        initShortcutsGraph(graph, carSpeedEnc);
+        AllEdgesIterator iter = graph.getAllEdges();
+        while (iter.next())
+            iter.set(bikeSpeedEnc, 18, 18);
+
+        GHUtility.getEdge(graph, 9, 14).set(bikeSpeedEnc, 0, 0);
+
+        graph.freeze();
+
+        checkPath(graph, carConfig, 7, 500, IntArrayList.from(3, 9, 14, 16, 13, 12), new int[]{0, 5, 6, 7, 8, 10, 11, 13, 15, 1, 3, 9, 14, 16, 12, 4, 2});
+        // detour around blocked 9,14
+        checkPath(graph, bikeConfig, 9, 500, IntArrayList.from(3, 10, 14, 16, 13, 12), new int[]{0, 5, 6, 7, 8, 10, 11, 13, 14, 15, 9, 1, 4, 3, 2, 12, 16});
+    }
+
+    @Test
+    public void testReusingNodeOrdering() {
+        DecimalEncodedValue car1SpeedEnc = new DecimalEncodedValueImpl("car1_speed", 5, 5, true);
+        DecimalEncodedValue car2SpeedEnc = new DecimalEncodedValueImpl("car2_speed", 5, 5, true);
+        DecimalEncodedValue car1TurnCostEnc = TurnCost.create("car1", 1);
+        DecimalEncodedValue car2TurnCostEnc = TurnCost.create("car2", 1);
+        EncodingManager em = EncodingManager.start()
+                .add(car1SpeedEnc).addTurnCostEncodedValue(car1TurnCostEnc)
+                .add(car2SpeedEnc).addTurnCostEncodedValue(car2TurnCostEnc)
+                .build();
+        CHConfig car1Config = CHConfig.nodeBased("c1", new SpeedWeighting(car1SpeedEnc));
+        CHConfig car2Config = CHConfig.nodeBased("c2", new SpeedWeighting(car2SpeedEnc));
+        BaseGraph graph = new BaseGraph.Builder(em).create();
+
+        int numNodes = 5_000;
+        int numQueries = 100;
+        long seed = System.nanoTime();
+        Random rnd = new Random(seed);
+        RandomGraph.start().seed(seed).nodes(numNodes).fill(graph, null);
+        AllEdgesIterator iter = graph.getAllEdges();
+        while (iter.next()) {
+            double car1Fwd = rnd.nextDouble() * 100;
+            if (rnd.nextDouble() < 0.05) car1Fwd = 0;
+            double car1Bwd = rnd.nextDouble() * 100;
+            if (rnd.nextDouble() < 0.05) car1Bwd = 0;
+            double car2Fwd = rnd.nextDouble() * 100;
+            if (rnd.nextDouble() < 0.05) car2Fwd = 0;
+            double car2Bwd = rnd.nextDouble() * 100;
+            if (rnd.nextDouble() < 0.05) car2Bwd = 0;
+            iter.set(car1SpeedEnc, car1Fwd, car1Bwd);
+            iter.set(car2SpeedEnc, car2Fwd, car2Bwd);
+        }
+        graph.freeze();
+
+        // create CH for cars
+        PrepareContractionHierarchies car1Pch = PrepareContractionHierarchies.fromGraph(graph, car1Config);
+        PrepareContractionHierarchies.Result resCar1 = car1Pch.doWork();
+
+        // create CH for motorcycles, re-use car contraction order
+        // this speeds up contraction significantly, but can lead to slower queries
+        CHStorage car1CHStore = resCar1.getCHStorage();
+        NodeOrderingProvider nodeOrderingProvider = car1CHStore.getNodeOrderingProvider();
+        PrepareContractionHierarchies car2Pch = PrepareContractionHierarchies.fromGraph(graph, car2Config)
+                .useFixedNodeOrdering(nodeOrderingProvider);
+        PrepareContractionHierarchies.Result resCar2 = car2Pch.doWork();
+        RoutingCHGraph car2CH = RoutingCHGraphImpl.fromGraph(graph, resCar2.getCHStorage(), resCar2.getCHConfig());
+
+        assertTrue(car1CHStore.getShortcuts() > 0 && resCar2.getCHStorage().getShortcuts() > 0);
+        assertNotEquals(car1CHStore.getShortcuts(), resCar2.getCHStorage().getShortcuts());
+
+        // run a few sample queries to check correctness
+        for (int i = 0; i < numQueries; ++i) {
+            Dijkstra dijkstra = new Dijkstra(graph, car2Config.getWeighting(), TraversalMode.NODE_BASED);
+            RoutingAlgorithm chAlgo = new CHRoutingAlgorithmFactory(car2CH).createAlgo(new PMap());
+
+            int from = rnd.nextInt(numNodes);
+            int to = rnd.nextInt(numNodes);
+            double dijkstraWeight = dijkstra.calcPath(from, to).getWeight();
+            double chWeight = chAlgo.calcPath(from, to).getWeight();
+            assertEquals(dijkstraWeight, chWeight, 1.e-1);
+        }
+    }
+
+    private void checkPath(BaseGraph g, CHConfig c, int expShortcuts, double expDistance, IntIndexedContainer expNodes, int[] nodeOrdering) {
+        PrepareContractionHierarchies prepare = createPrepareContractionHierarchies(g, c);
+        useNodeOrdering(prepare, nodeOrdering);
+        PrepareContractionHierarchies.Result result = prepare.doWork();
+        assertEquals(expShortcuts, result.getShortcuts(), c.toString());
+        RoutingCHGraph lg = RoutingCHGraphImpl.fromGraph(g, result.getCHStorage(), result.getCHConfig());
+        RoutingAlgorithm algo = new CHRoutingAlgorithmFactory(lg).createAlgo(new PMap());
+        Path path = algo.calcPath(3, 12);
+        assertEquals(expDistance, path.getDistance(), 1e-5, path.toString());
+        assertEquals(expNodes, path.calcNodes(), path.toString());
+    }
+
+    private PrepareContractionHierarchies createPrepareContractionHierarchies(BaseGraph g) {
+        return createPrepareContractionHierarchies(g, chConfig);
+    }
+
+    private PrepareContractionHierarchies createPrepareContractionHierarchies(BaseGraph g, CHConfig p) {
+        if (!g.isFrozen())
+            g.freeze();
+        return PrepareContractionHierarchies.fromGraph(g, p);
+    }
+
+    private void useNodeOrdering(PrepareContractionHierarchies prepare, int[] nodeOrdering) {
+        prepare.useFixedNodeOrdering(NodeOrderingProvider.fromArray(nodeOrdering));
+    }
+
 }

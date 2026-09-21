@@ -1,0 +1,187 @@
+package com.graphhopper.routing.weighting.custom;
+
+import com.graphhopper.json.MinMax;
+import com.graphhopper.routing.ev.DecimalEncodedValue;
+import com.graphhopper.routing.ev.DecimalEncodedValueImpl;
+import com.graphhopper.routing.ev.EncodedValueLookup;
+import com.graphhopper.routing.ev.IntEncodedValueImpl;
+import com.graphhopper.routing.util.EncodingManager;
+import com.graphhopper.util.CustomModel;
+import org.junit.jupiter.api.Test;
+
+import java.util.Arrays;
+import java.util.Map;
+import java.util.Set;
+
+import static com.graphhopper.routing.weighting.custom.ValueExpressionVisitor.*;
+import static org.junit.jupiter.api.Assertions.*;
+
+class ValueExpressionVisitorTest {
+
+    static Set<String> findVariables(String valueExpression, EncodedValueLookup lookup) {
+        return ValueExpressionVisitor.findVariables(valueExpression, Map.of(), lookup);
+    }
+
+    static MinMax findMinMax(String valueExpression, EncodedValueLookup lookup) {
+        return ValueExpressionVisitor.findMinMax(valueExpression, Map.of(), lookup);
+    }
+
+    @Test
+    public void protectUsFromStuff() {
+        NameValidator allNamesInvalid = s -> false;
+        for (String toParse : Arrays.asList("", "new Object()", "java.lang.Object", "Test.class",
+                "new Object(){}.toString().length", "{ 5}", "{ 5, 7 }", "Object.class", "System.out.println(\"\")",
+                "something.newInstance()", "e.getClass ( )", "edge.getDistance()*7/*test", "edge.getDistance()//*test",
+                "edge . getClass()", "(edge = edge) == edge", ") edge (", "in(area_blup(), edge)", "s -> truevalue")) {
+            ParseResult res = parse(toParse, allNamesInvalid);
+            assertFalse(res.ok, "should not be simple condition: " + toParse);
+            assertTrue(res.guessedVariables == null || res.guessedVariables.isEmpty());
+        }
+
+        assertFalse(parse("edge; getClass()", allNamesInvalid).ok);
+    }
+
+    @Test
+    public void isValidAndSimpleCondition() {
+        ParseResult result = parse("edge == edge", (arg) -> false);
+        assertFalse(result.ok);
+
+        result = parse("Math.sqrt(2)", (arg) -> false);
+        assertTrue(result.ok, result.invalidMessage);
+        assertTrue(result.guessedVariables.isEmpty());
+
+        result = parse("Math.sqrt(my_speed)", (arg) -> arg.equals("my_speed"));
+        assertTrue(result.ok, result.invalidMessage);
+        assertEquals("[my_speed]", result.guessedVariables.toString());
+
+        result = parse("Math.min(my_speed, 10)", (arg) -> arg.equals("my_speed"));
+        assertTrue(result.ok, result.invalidMessage);
+        assertEquals("[my_speed]", result.guessedVariables.toString());
+        result = parse("1 - 0.1 * Math.max(0.5, my_speed)", (arg) -> arg.equals("my_speed"));
+        assertTrue(result.ok, result.invalidMessage);
+        assertFalse(parse("Math.pow(my_speed, 2)", (arg) -> arg.equals("my_speed")).ok);
+
+        result = parse("edge.getDistance()", (arg) -> false);
+        assertFalse(result.ok);
+
+        result = parse("road_class == PRIMARY", (arg) -> false);
+        assertFalse(result.ok);
+
+        result = parse("toll == Toll.NO", (arg) -> false);
+        assertFalse(result.ok);
+
+        result = parse("priority * 2", (s) -> s.equals("priority"));
+        assertTrue(result.ok, result.invalidMessage);
+        assertEquals("[priority]", result.guessedVariables.toString());
+
+        // LATER but requires accepting also EnumEncodedValue for value expression
+        // result = parse("road_class.ordinal()*2", validVariable);
+        // assertTrue(result.ok, result.invalidMessage);
+        // assertTrue(parse("Math.sqrt(road_class.ordinal())", validVariable).ok);
+    }
+
+
+    @Test
+    public void parameters() {
+        DecimalEncodedValue prio = new DecimalEncodedValueImpl("my_priority", 5, 1, false);
+        EncodedValueLookup lookup = new EncodingManager.Builder().add(prio).build();
+        Map<String, CustomModel.Parameter> params = Map.of("factor", new CustomModel.Parameter(0.8), "negative", new CustomModel.Parameter(-2));
+
+        // a lone parameter takes the fast path for numbers (no ExpressionEvaluator)
+        assertEquals(Set.of("p_factor"), ValueExpressionVisitor.findVariables("p_factor", params, lookup));
+        assertInterval(0.8, 0.8, ValueExpressionVisitor.findMinMax(" p_factor ", params, lookup));
+        String msg = assertThrows(IllegalArgumentException.class, () -> ValueExpressionVisitor.findVariables("p_negative", params, lookup)).getMessage();
+        assertTrue(msg.contains("negative weight"), msg);
+
+        // combined with other terms the parameter is substituted for the evaluator
+        assertInterval(1.6, 1.6, ValueExpressionVisitor.findMinMax("2 * p_factor", params, lookup));
+        assertInterval(-4, -4, ValueExpressionVisitor.findMinMax("2 * p_negative", params, lookup));
+        assertInterval(0, 24.8, ValueExpressionVisitor.findMinMax("p_factor * my_priority", params, lookup));
+        assertEquals(Set.of("p_factor", "my_priority"), ValueExpressionVisitor.findVariables("p_factor * my_priority", params, lookup));
+    }
+
+    @Test
+    public void testErrors() {
+        DecimalEncodedValue prio1 = new DecimalEncodedValueImpl("my_priority", 5, 1, false);
+        IntEncodedValueImpl prio2 = new IntEncodedValueImpl("my_priority2", 5, -5, false, false);
+        EncodedValueLookup lookup = new EncodingManager.Builder().add(prio1).add(prio2).build();
+
+        String msg = assertThrows(IllegalArgumentException.class, () -> findMinMax("unknown*3", lookup)).getMessage();
+        assertTrue(msg.contains("'unknown' not available"), msg);
+
+        msg = assertThrows(IllegalArgumentException.class, () -> findMinMax("my_priority - my_priority2 * 3", lookup)).getMessage();
+        assertTrue(msg.contains("a single EncodedValue"), msg);
+        // unary minus is also a minus operator
+        msg = assertThrows(IllegalArgumentException.class, () -> findMinMax("-my_priority + my_priority2 * 3", lookup)).getMessage();
+        assertTrue(msg.contains("a single EncodedValue"), msg);
+
+        msg = assertThrows(IllegalArgumentException.class, () -> findMinMax("1/my_priority", lookup)).getMessage();
+        assertTrue(msg.contains("invalid operation '/'"), msg);
+
+        msg = assertThrows(IllegalArgumentException.class, () -> findMinMax("my_priority*my_priority2 * 3", lookup)).getMessage();
+        assertTrue(msg.contains("Currently only a single EncodedValue is allowed on the right-hand side"), msg);
+
+        msg = assertThrows(IllegalArgumentException.class, () -> findVariables("unknown*3", lookup)).getMessage();
+        assertTrue(msg.contains("'unknown' not available"), msg);
+
+        msg = assertThrows(IllegalArgumentException.class, () -> findVariables("my_priority - my_priority2 * 3", lookup)).getMessage();
+        assertTrue(msg.contains("a single EncodedValue"), msg);
+        // unary minus is also a minus operator
+        msg = assertThrows(IllegalArgumentException.class, () -> findVariables("-my_priority + my_priority2 * 3", lookup)).getMessage();
+        assertTrue(msg.contains("a single EncodedValue"), msg);
+
+        msg = assertThrows(IllegalArgumentException.class, () -> findVariables("1/my_priority", lookup)).getMessage();
+        assertTrue(msg.contains("invalid operation '/'"), msg);
+
+        msg = assertThrows(IllegalArgumentException.class, () -> findVariables("my_priority*my_priority2 * 3", lookup)).getMessage();
+        assertTrue(msg.contains("Currently only a single EncodedValue is allowed on the right-hand side"), msg);
+
+        msg = assertThrows(IllegalArgumentException.class, () -> findVariables("my_prio*my_priority2 * 3", lookup)).getMessage();
+        assertEquals("'my_prio' not available", msg);
+
+        msg = assertThrows(IllegalArgumentException.class, () -> findVariables("-0.5", lookup)).getMessage();
+        assertEquals("illegal expression as it can result in a negative weight: -0.5", msg);
+
+        msg = assertThrows(IllegalArgumentException.class, () -> findVariables("-my_priority", lookup)).getMessage();
+        assertEquals("illegal expression as it can result in a negative weight: -my_priority", msg);
+    }
+
+    @Test
+    public void runMaxMin() {
+        DecimalEncodedValue prio1 = new DecimalEncodedValueImpl("my_priority", 5, 1, false);
+        IntEncodedValueImpl prio2 = new IntEncodedValueImpl("my_priority2", 5, -5, false, false);
+        EncodedValueLookup lookup = new EncodingManager.Builder().add(prio1).add(prio2).build();
+
+        assertInterval(2, 2, "2", lookup);
+
+        assertInterval(0, 62, "2*my_priority", lookup);
+        // Math.min and Math.max are monotone, so the bounds from the range endpoints are exact
+        assertInterval(0, 10, "Math.min(my_priority, 10)", lookup);
+        assertInterval(10, 31, "Math.max(10, my_priority)", lookup);
+        assertInterval(0.7, 1, "1 - 0.03 * Math.min(my_priority, 10)", lookup);
+
+        assertInterval(-52, 10, "-2*my_priority2", lookup);
+    }
+
+    @Test
+    public void runVariables() {
+        DecimalEncodedValue prio1 = new DecimalEncodedValueImpl("my_priority", 5, 1, false);
+        IntEncodedValueImpl prio2 = new IntEncodedValueImpl("my_priority2", 5, -5, false, false);
+        EncodedValueLookup lookup = new EncodingManager.Builder().add(prio1).add(prio2).build();
+
+        assertEquals(Set.of(), findVariables("2", lookup));
+        assertEquals(Set.of("my_priority"), findVariables("2*my_priority", lookup));
+
+        Exception ex = assertThrows(IllegalArgumentException.class, () ->  findVariables("-2*my_priority", lookup));
+        assertTrue(ex.getMessage().contains("illegal expression as it can result in a negative weight"));
+    }
+
+    void assertInterval(double min, double max, String expression, EncodedValueLookup lookup) {
+        assertInterval(min, max, findMinMax(expression, lookup));
+    }
+
+    void assertInterval(double min, double max, MinMax minmax) {
+        assertEquals(min, minmax.min, 0.1);
+        assertEquals(max, minmax.max, 0.1);
+    }
+}

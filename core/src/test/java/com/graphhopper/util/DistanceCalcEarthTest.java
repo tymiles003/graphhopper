@@ -1,14 +1,14 @@
 /*
- *  Licensed to GraphHopper and Peter Karich under one or more contributor
- *  license agreements. See the NOTICE file distributed with this work for 
+ *  Licensed to GraphHopper GmbH under one or more contributor
+ *  license agreements. See the NOTICE file distributed with this work for
  *  additional information regarding copyright ownership.
- * 
- *  GraphHopper licenses this file to you under the Apache License, 
- *  Version 2.0 (the "License"); you may not use this file except in 
+ *
+ *  GraphHopper GmbH licenses this file to you under the Apache License,
+ *  Version 2.0 (the "License"); you may not use this file except in
  *  compliance with the License. You may obtain a copy of the License at
- * 
+ *
  *       http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -18,38 +18,23 @@
 package com.graphhopper.util;
 
 import com.graphhopper.util.shapes.GHPoint;
-import static org.junit.Assert.*;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
- *
  * @author Peter Karich
  */
-public class DistanceCalcEarthTest
-{
+public class DistanceCalcEarthTest {
     private DistanceCalc dc = new DistanceCalcEarth();
 
     @Test
-    public void testCalcCircumference()
-    {
+    public void testCalcCircumference() {
         assertEquals(DistanceCalcEarth.C, dc.calcCircumference(0), 1e-7);
     }
 
     @Test
-    public void testGeohashMaxDist()
-    {
-        DistanceCalcEarth dce = new DistanceCalcEarth();
-        assertEquals(DistanceCalcEarth.C / 2, dce.calcSpatialKeyMaxDist(0), 1);
-        assertEquals(DistanceCalcEarth.C / 2, dce.calcSpatialKeyMaxDist(1), 1);
-        assertEquals(DistanceCalcEarth.C / 4, dce.calcSpatialKeyMaxDist(2), 1);
-        assertEquals(DistanceCalcEarth.C / 4, dce.calcSpatialKeyMaxDist(3), 1);
-        assertEquals(DistanceCalcEarth.C / 8, dce.calcSpatialKeyMaxDist(4), 1);
-        assertEquals(DistanceCalcEarth.C / 8, dce.calcSpatialKeyMaxDist(5), 1);
-    }
-
-    @Test
-    public void testDistance()
-    {
+    public void testDistance() {
         float lat = 24.235f;
         float lon = 47.234f;
         DistanceCalc approxDist = new DistancePlaneProjection();
@@ -97,8 +82,7 @@ public class DistanceCalcEarthTest
     }
 
     @Test
-    public void testEdgeDistance()
-    {
+    public void testEdgeDistance() {
         double dist = dc.calcNormalizedEdgeDistance(49.94241, 11.544356,
                 49.937964, 11.541824,
                 49.942272, 11.555643);
@@ -116,8 +100,90 @@ public class DistanceCalcEarthTest
     }
 
     @Test
-    public void testValidEdgeDistance()
-    {
+    public void testEdgeDistance3d() {
+        double dist = dc.calcNormalizedEdgeDistance3D(49.94241, 11.544356, 0,
+                49.937964, 11.541824, 0,
+                49.942272, 11.555643, 0);
+        double expectedDist = dc.calcNormalizedDist(49.94241, 11.544356,
+                49.9394, 11.54681);
+        assertEquals(expectedDist, dist, 1e-4);
+
+        // test identical lats
+        dist = dc.calcNormalizedEdgeDistance3D(49.936299, 11.543992, 0,
+                49.9357, 11.543047, 0,
+                49.9357, 11.549227, 0);
+        expectedDist = dc.calcNormalizedDist(49.936299, 11.543992,
+                49.9357, 11.543992);
+        assertEquals(expectedDist, dist, 1e-4);
+    }
+
+    @Test
+    public void testEdgeDistance3dEarth() {
+        double dist = dc.calcNormalizedEdgeDistance3D(0, 0.5, 10,
+                0, 0, 0,
+                0, 1, 0);
+        assertEquals(10, dc.calcDenormalizedDist(dist), 1e-4);
+    }
+
+    @Test
+    public void testEdgeDistance3dEarthNaN() {
+        double dist = dc.calcNormalizedEdgeDistance3D(0, 0.5, Double.NaN,
+                0, 0, 0,
+                0, 1, 0);
+        assertEquals(0, dc.calcDenormalizedDist(dist), 1e-4);
+    }
+
+    @Test
+    public void testEdgeDistance3dPlane() {
+        DistanceCalc calc = new DistancePlaneProjection();
+        double dist = calc.calcNormalizedEdgeDistance3D(0, 0.5, 10,
+                0, 0, 0,
+                0, 1, 0);
+        assertEquals(10, calc.calcDenormalizedDist(dist), 1e-4);
+    }
+
+    @Test
+    public void testEdgeDistanceStartEndSame() {
+        DistanceCalc calc = new DistancePlaneProjection();
+        // just change elevation
+        double dist = calc.calcNormalizedEdgeDistance3D(0, 0, 10,
+                0, 0, 0,
+                0, 0, 0);
+        assertEquals(10, calc.calcDenormalizedDist(dist), 1e-4);
+        // just change lat
+        dist = calc.calcNormalizedEdgeDistance3D(1, 0, 0,
+                0, 0, 0,
+                0, 0, 0);
+        assertEquals(DistanceCalcEarth.METERS_PER_DEGREE, calc.calcDenormalizedDist(dist), 1e-4);
+        // just change lon
+        dist = calc.calcNormalizedEdgeDistance3D(0, 1, 0,
+                0, 0, 0,
+                0, 0, 0);
+        assertEquals(DistanceCalcEarth.METERS_PER_DEGREE, calc.calcDenormalizedDist(dist), 1e-4);
+    }
+
+    @Test
+    public void testEdgeDistanceStartEndDifferentElevation() {
+        DistanceCalc calc = new DistancePlaneProjection();
+        // just change elevation
+        double dist = calc.calcNormalizedEdgeDistance3D(0, 0, 10,
+                0, 0, 0,
+                0, 0, 1);
+        assertEquals(0, calc.calcDenormalizedDist(dist), 1e-4);
+        // just change lat
+        dist = calc.calcNormalizedEdgeDistance3D(1, 0, 0,
+                0, 0, 0,
+                0, 0, 1);
+        assertEquals(DistanceCalcEarth.METERS_PER_DEGREE, calc.calcDenormalizedDist(dist), 1e-4);
+        // just change lon
+        dist = calc.calcNormalizedEdgeDistance3D(0, 1, 0,
+                0, 0, 0,
+                0, 0, 1);
+        assertEquals(DistanceCalcEarth.METERS_PER_DEGREE, calc.calcDenormalizedDist(dist), 1e-4);
+    }
+
+    @Test
+    public void testValidEdgeDistance() {
         assertTrue(dc.validEdgeDistance(49.94241, 11.544356, 49.937964, 11.541824, 49.942272, 11.555643));
         assertTrue(dc.validEdgeDistance(49.936624, 11.547636, 49.937964, 11.541824, 49.942272, 11.555643));
         assertTrue(dc.validEdgeDistance(49.940712, 11.556069, 49.937964, 11.541824, 49.942272, 11.555643));
@@ -136,8 +202,7 @@ public class DistanceCalcEarthTest
     }
 
     @Test
-    public void testPrecisionBug()
-    {
+    public void testPrecisionBug() {
         DistanceCalc dist = new DistancePlaneProjection();
 //        DistanceCalc dist = new DistanceCalc();
         double queryLat = 42.56819, queryLon = 1.603231;
@@ -163,8 +228,7 @@ public class DistanceCalcEarthTest
     }
 
     @Test
-    public void testPrecisionBug2()
-    {
+    public void testPrecisionBug2() {
         DistanceCalc distCalc = new DistancePlaneProjection();
         double queryLat = 55.818994, queryLon = 37.595354;
         double tmpLat = 55.81777239183573, tmpLon = 37.59598350366913;
@@ -176,5 +240,95 @@ public class DistanceCalcEarthTest
 
         assertEquals(new GHPoint(55.81863, 37.594626), distCalc.calcCrossingPointToEdge(queryLat, queryLon,
                 tmpLat, tmpLon, wayLat, wayLon));
+    }
+
+    @Test
+    public void testDistance3dEarth() {
+        DistanceCalc distCalc = new DistanceCalcEarth();
+        assertEquals(1, distCalc.calcDist3D(
+                0, 0, 0,
+                0, 0, 1
+        ), 1e-6);
+    }
+
+    @Test
+    public void testDistance3dEarthNaN() {
+        DistanceCalc distCalc = new DistanceCalcEarth();
+        assertEquals(0, distCalc.calcDist3D(
+                0, 0, 0,
+                0, 0, Double.NaN
+        ), 1e-6);
+        assertEquals(0, distCalc.calcDist3D(
+                0, 0, Double.NaN,
+                0, 0, 10
+        ), 1e-6);
+        assertEquals(0, distCalc.calcDist3D(
+                0, 0, Double.NaN,
+                0, 0, Double.NaN
+        ), 1e-6);
+    }
+
+    @Test
+    public void testDistance3dPlane() {
+        DistancePlaneProjection distCalc = new DistancePlaneProjection();
+        assertEquals(1, distCalc.calcDist3D(
+                0, 0, 0,
+                0, 0, 1
+        ), 1e-6);
+        assertEquals(10, distCalc.calcDist3D(
+                0, 0, 0,
+                0, 0, 10
+        ), 1e-6);
+    }
+
+    @Test
+    public void testDistance3dPlaneNaN() {
+        DistancePlaneProjection distCalc = new DistancePlaneProjection();
+        assertEquals(0, distCalc.calcDist3D(
+                0, 0, 0,
+                0, 0, Double.NaN
+        ), 1e-6);
+        assertEquals(0, distCalc.calcDist3D(
+                0, 0, Double.NaN,
+                0, 0, 10
+        ), 1e-6);
+        assertEquals(0, distCalc.calcDist3D(
+                0, 0, Double.NaN,
+                0, 0, Double.NaN
+        ), 1e-6);
+    }
+
+    @Test
+    public void testIntermediatePoint() {
+        DistanceCalc distCalc = new DistanceCalcEarth();
+        GHPoint point = distCalc.intermediatePoint(0, 0, 0, 0, 0);
+        assertEquals(0, point.getLat(), 1e-5);
+        assertEquals(0, point.getLon(), 1e-5);
+
+        point = distCalc.intermediatePoint(0.5, 0, 0, 10, 0);
+        assertEquals(5, point.getLat(), 1e-5);
+        assertEquals(0, point.getLon(), 1e-5);
+
+        point = distCalc.intermediatePoint(0.5, 0, 0, 0, 10);
+        assertEquals(0, point.getLat(), 1e-5);
+        assertEquals(5, point.getLon(), 1e-5);
+
+        // cross international date line going west
+        point = distCalc.intermediatePoint(0.5, 45, -179, 45, 177);
+        assertEquals(45, point.getLat(), 1);
+        assertEquals(179, point.getLon(), 1e-5);
+
+        // cross international date line going east
+        point = distCalc.intermediatePoint(0.5, 45, 179, 45, -177);
+        assertEquals(45, point.getLat(), 1);
+        assertEquals(-179, point.getLon(), 1e-5);
+
+        // cross north pole
+        point = distCalc.intermediatePoint(0.25, 45, -90, 45, 90);
+        assertEquals(67.5, point.getLat(), 1e-1);
+        assertEquals(-90, point.getLon(), 1e-5);
+        point = distCalc.intermediatePoint(0.75, 45, -90, 45, 90);
+        assertEquals(67.5, point.getLat(), 1e-1);
+        assertEquals(90, point.getLon(), 1e-5);
     }
 }

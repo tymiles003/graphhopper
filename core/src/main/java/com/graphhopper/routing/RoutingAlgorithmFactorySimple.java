@@ -1,14 +1,14 @@
 /*
- *  Licensed to GraphHopper and Peter Karich under one or more contributor
- *  license agreements. See the NOTICE file distributed with this work for 
+ *  Licensed to GraphHopper GmbH under one or more contributor
+ *  license agreements. See the NOTICE file distributed with this work for
  *  additional information regarding copyright ownership.
- * 
- *  GraphHopper licenses this file to you under the Apache License, 
- *  Version 2.0 (the "License"); you may not use this file except in 
+ *
+ *  GraphHopper GmbH licenses this file to you under the Apache License,
+ *  Version 2.0 (the "License"); you may not use this file except in
  *  compliance with the License. You may obtain a copy of the License at
- * 
+ *
  *       http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -17,68 +17,74 @@
  */
 package com.graphhopper.routing;
 
-import com.graphhopper.routing.util.BeelineWeightApproximator;
-import com.graphhopper.routing.util.WeightApproximator;
+import com.graphhopper.routing.weighting.BeelineWeightApproximator;
+import com.graphhopper.routing.weighting.WeightApproximator;
+import com.graphhopper.routing.weighting.Weighting;
 import com.graphhopper.storage.Graph;
 import com.graphhopper.storage.NodeAccess;
+import com.graphhopper.util.DistanceCalcEarth;
+import com.graphhopper.util.DistancePlaneProjection;
 import com.graphhopper.util.Helper;
+import com.graphhopper.util.PMap;
+
+import static com.graphhopper.util.Parameters.Algorithms.*;
 
 /**
  * A simple factory creating normal algorithms (RoutingAlgorithm) without preparation.
  * <p>
+ *
  * @author Peter Karich
  */
-public class RoutingAlgorithmFactorySimple implements RoutingAlgorithmFactory
-{
+public class RoutingAlgorithmFactorySimple implements RoutingAlgorithmFactory {
     @Override
-    public RoutingAlgorithm createAlgo( Graph g, AlgorithmOptions opts )
-    {        
-        AbstractRoutingAlgorithm algo;
+    public RoutingAlgorithm createAlgo(Graph g, Weighting w, AlgorithmOptions opts) {
+        RoutingAlgorithm ra;
         String algoStr = opts.getAlgorithm();
-        if (AlgorithmOptions.DIJKSTRA_BI.equalsIgnoreCase(algoStr))
-        {
-            return new DijkstraBidirectionRef(g, opts.getFlagEncoder(), opts.getWeighting(), opts.getTraversalMode());
-        } else if (AlgorithmOptions.DIJKSTRA.equalsIgnoreCase(algoStr))
-        {
-            return new Dijkstra(g, opts.getFlagEncoder(), opts.getWeighting(), opts.getTraversalMode());
-        } else if (AlgorithmOptions.ASTAR_BI.equalsIgnoreCase(algoStr))
-        {
-            AStarBidirection aStarBi = new AStarBidirection(g, opts.getFlagEncoder(), opts.getWeighting(),
+        Weighting weighting = g.wrapWeighting(w);
+        if (DIJKSTRA_BI.equalsIgnoreCase(algoStr)) {
+            ra = new DijkstraBidirectionRef(g, weighting, opts.getTraversalMode());
+        } else if (DIJKSTRA.equalsIgnoreCase(algoStr)) {
+            ra = new Dijkstra(g, weighting, opts.getTraversalMode());
+
+        } else if (ASTAR_BI.equalsIgnoreCase(algoStr) || Helper.isEmpty(algoStr)) {
+            AStarBidirection aStarBi = new AStarBidirection(g, weighting,
                     opts.getTraversalMode());
-            aStarBi.setApproximation(getApproximation(AlgorithmOptions.ASTAR_BI, opts, g.getNodeAccess()));
-            return aStarBi;
-        } else if (AlgorithmOptions.DIJKSTRA_ONE_TO_MANY.equalsIgnoreCase(algoStr))
-        {
-            return new DijkstraOneToMany(g, opts.getFlagEncoder(), opts.getWeighting(), opts.getTraversalMode());
-        } else if (AlgorithmOptions.ASTAR.equalsIgnoreCase(algoStr))
-        {
-            AStar aStar = new AStar(g, opts.getFlagEncoder(), opts.getWeighting(), opts.getTraversalMode());
-            aStar.setApproximation(getApproximation(AlgorithmOptions.ASTAR, opts, g.getNodeAccess()));
-            return aStar;
-        } else
-        {
+            aStarBi.setApproximation(getApproximation(ASTAR_BI, opts.getHints(), weighting, g.getNodeAccess()));
+            ra = aStarBi;
+
+        } else if (DIJKSTRA_ONE_TO_MANY.equalsIgnoreCase(algoStr)) {
+            ra = new DijkstraOneToMany(g, weighting, opts.getTraversalMode());
+
+        } else if (ASTAR.equalsIgnoreCase(algoStr)) {
+            AStar aStar = new AStar(g, weighting, opts.getTraversalMode());
+            aStar.setApproximation(getApproximation(ASTAR, opts.getHints(), w, g.getNodeAccess()));
+            ra = aStar;
+
+        } else if (ALT_ROUTE.equalsIgnoreCase(algoStr)) {
+            ra = new AlternativeRoute(g, weighting, opts.getTraversalMode(), opts.getHints());
+
+        } else {
             throw new IllegalArgumentException("Algorithm " + algoStr + " not found in " + getClass().getName());
         }
 
+        ra.setMaxVisitedNodes(opts.getMaxVisitedNodes());
+        ra.setTimeoutMillis(opts.getTimeoutMillis());
+        return ra;
     }
 
-    private WeightApproximator getApproximation( String prop, AlgorithmOptions opts, NodeAccess na )
-    {
-        String approxAsStr = opts.getHints().get(prop + ".approximation", "BeelineSimplification");
-        if ("BeelineSimplification".equals(approxAsStr))
-        {
-            BeelineWeightApproximator approx = new BeelineWeightApproximator(na, opts.getWeighting());
-            approx.setDistanceCalc(Helper.DIST_PLANE);
-            return approx;
+    public static WeightApproximator getApproximation(String prop, PMap opts, Weighting weighting, NodeAccess na) {
+        String approxAsStr = opts.getString(prop + ".approximation", "BeelineSimplification");
+        double epsilon = opts.getDouble(prop + ".epsilon", 1);
 
-        } else if ("BeelineAccurate".equals(approxAsStr))
-        {
-            BeelineWeightApproximator approx = new BeelineWeightApproximator(na, opts.getWeighting());
-            approx.setDistanceCalc(Helper.DIST_EARTH);
-            return approx;
-        } else
-        {
-            throw new IllegalArgumentException("Approximation " + approxAsStr + " not found in " + getClass().getName());
-        }
+        BeelineWeightApproximator approx = new BeelineWeightApproximator(na, weighting);
+        approx.setEpsilon(epsilon);
+        if ("BeelineSimplification".equals(approxAsStr))
+            approx.setDistanceCalc(DistancePlaneProjection.DIST_PLANE);
+        else if ("BeelineAccurate".equals(approxAsStr))
+            approx.setDistanceCalc(DistanceCalcEarth.DIST_EARTH);
+        else
+            throw new IllegalArgumentException("Approximation " + approxAsStr + " not found in " + RoutingAlgorithmFactorySimple.class.getName());
+
+        return approx;
     }
 }

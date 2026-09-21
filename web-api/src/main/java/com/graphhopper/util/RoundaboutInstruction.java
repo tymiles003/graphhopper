@@ -1,0 +1,143 @@
+/*
+ *  Licensed to GraphHopper GmbH under one or more contributor
+ *  license agreements. See the NOTICE file distributed with this work for
+ *  additional information regarding copyright ownership.
+ *
+ *  GraphHopper GmbH licenses this file to you under the Apache License,
+ *  Version 2.0 (the "License"); you may not use this file except in
+ *  compliance with the License. You may obtain a copy of the License at
+ *
+ *       http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ */
+package com.graphhopper.util;
+
+import java.util.HashMap;
+import java.util.Map;
+
+import static com.graphhopper.util.Parameters.Details.STREET_DESTINATION;
+import static com.graphhopper.util.Parameters.Details.STREET_REF;
+
+/**
+ * @author jansoe
+ */
+public class RoundaboutInstruction extends Instruction {
+    private int exitNumber = 0;
+    // 0 undetermined, 1 clockwise, -1 counterclockwise, 2 inconsistent
+    private int clockwise = 0;
+    private boolean exited = false;
+    private double radian = Double.NaN;
+
+    public RoundaboutInstruction(int sign, String name, PointList pl) {
+        super(sign, name, pl);
+    }
+
+    public void increaseExitNumber() {
+        this.exitNumber += 1;
+    }
+
+    public RoundaboutInstruction setDirOfRotation(double deltaIn) {
+        if (clockwise == 0) {
+            clockwise = deltaIn > 0 ? 1 : -1;
+        } else {
+            int clockwise2 = deltaIn > 0 ? 1 : -1;
+            if (clockwise != clockwise2) {
+                clockwise = 2;
+            }
+        }
+        return this;
+    }
+
+    public RoundaboutInstruction setExited() {
+        exited = true;
+        return this;
+    }
+
+    public int getExitNumber() {
+        return exitNumber;
+    }
+
+    public RoundaboutInstruction setExitNumber(int exitNumber) {
+        this.exitNumber = exitNumber;
+        return this;
+    }
+
+    /**
+     * @return radian of angle -2PI &lt; x &lt; 2PI between roundabout entrance and exit values
+     * <ul>
+     * <li>&gt; 0 is for clockwise rotation</li>
+     * <li>&lt; 0 is for counterclockwise rotation</li>
+     * <li>NaN if direction of rotation is unclear</li>
+     * </ul>
+     */
+    public double getTurnAngle() {
+        if (Math.abs(clockwise) != 1)
+            return Double.NaN;
+        else
+            return Math.PI * clockwise - radian;
+    }
+
+    /**
+     * The radian value between entrance (in) and exit (out) of this roundabout.
+     */
+    public RoundaboutInstruction setRadian(double radian) {
+        this.radian = radian;
+        return this;
+    }
+
+    @Override
+    public Map<String, Object> getExtraInfoJSON() {
+        Map<String, Object> tmpMap = new HashMap<>(3);
+        if (getSign() == ROUNDABOUT_USE) tmpMap.put("exit_number", getExitNumber());
+        tmpMap.put("exited", this.exited);
+        double tmpAngle = getTurnAngle();
+        if (!Double.isNaN(tmpAngle))
+            tmpMap.put("turn_angle", Helper.round(tmpAngle, 2));
+
+        return tmpMap;
+
+    }
+
+    @Override
+    public String getTurnDescription(Translation tr) {
+        if (rawName)
+            return getName();
+
+        String str;
+        String streetName = _getName();
+
+        String destination = extraInfo != null ? (String) extraInfo.get(STREET_DESTINATION) : null;
+        String ref = extraInfo != null ? (String) extraInfo.get(STREET_REF) : null;
+        int sign = getSign();
+        if (sign == Instruction.ROUNDABOUT_USE) {
+            if (exitNumber == 0) {
+                str = tr.tr("roundabout_enter");
+            } else {
+                if (!Helper.isEmpty(streetName) && !streetName.equals(ref)) {
+                    str = tr.tr("roundabout_exit_onto", getExitNumber(), streetName);
+                } else if (!Helper.isEmpty(destination)) {
+                    String towardStr = tr.tr("toward");
+                    towardStr = towardStr.equals("toward") ? "toward" : towardStr;
+                    str = tr.tr("roundabout_exit", getExitNumber()) + " " + towardStr + " " + destination;
+                } else if (!Helper.isEmpty(ref)) {
+                    str = tr.tr("roundabout_exit_onto", getExitNumber(), ref);
+                } else if (!Helper.isEmpty(streetName)) {
+                    str = tr.tr("roundabout_exit_onto", getExitNumber(), streetName);
+                } else {
+                    str = tr.tr("roundabout_exit", getExitNumber());
+                }
+            }
+        } else if (sign == Instruction.ROUNDABOUT_EXIT) {
+            str = Helper.isEmpty(streetName) ? tr.tr("roundabout_exit_now")
+                    : tr.tr("roundabout_exit_onto_now", streetName);
+        } else {
+            throw new IllegalStateException(sign + " no roundabout indication");
+        }
+        return str;
+    }
+}

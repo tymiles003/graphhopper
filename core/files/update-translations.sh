@@ -2,13 +2,11 @@ HOME=$(dirname $0)
 cd $HOME/..
 
 destination=src/main/resources/com/graphhopper/util/
-
-translations="en_US SKIP bg ca de_DE el es fil fi fr gl he it ja ne nl pt_BR pt_PT ro ru si sk sv_SE tr uk vi_VI zh_CN"
+CUT=$(command -v gcut || command -v cut)
+translations="en_US SKIP SKIP ar ast az bg bn_BN ca cs_CZ da_DK de_DE el en_AU eo es fa fil fi fr_FR fr_CH gl he hr_HR hsb hu_HU in_ID it ja kab_DZ ko kz lt_LT mn nb_NO ne nl pl pt_BR pt_PT ro ru sk sl_SI sr_RS sv_SE tr uk uz vi_VN zh_CN zh_HK zh_TW"
 file=$1
 
-# You can execute the following
-# curl "https://docs.google.com/spreadsheet/pub?key=0AmukcXek0JP6dGM4R1VTV2d3TkRSUFVQakhVeVBQRHc&single=true&gid=0&output=txt" > tmp.tsv
-# ./files/update-translations.sh tmp.tsv && rm tmp.tsv
+# See translations.md for how to run this
 
 INDEX=1
 for tr in $translations; do
@@ -16,6 +14,6 @@ for tr in $translations; do
   if [[ "x$tr" = "xSKIP" ]]; then
     continue
   fi
-  echo -e '# do not edit manually, instead use spreadsheet https://t.co/f086oJXAEI and script ./core/files/update-translations.sh\n' > $destination/$tr.txt
-  tail -n+5 "$file" | cut -s -f1,$INDEX --output-delimiter='=' >> $destination/$tr.txt
+  printf '# do not edit manually, instead use spreadsheet from translations.md and script ./core/files/update-translations.sh\n' > $destination/$tr.txt
+  tail -n+5 "$file" | $CUT -s -f1,$INDEX --output-delimiter='=' >> $destination/$tr.txt
 done

@@ -1,14 +1,14 @@
 /*
- *  Licensed to GraphHopper and Peter Karich under one or more contributor
- *  license agreements. See the NOTICE file distributed with this work for 
+ *  Licensed to GraphHopper GmbH under one or more contributor
+ *  license agreements. See the NOTICE file distributed with this work for
  *  additional information regarding copyright ownership.
- * 
- *  GraphHopper licenses this file to you under the Apache License, 
- *  Version 2.0 (the "License"); you may not use this file except in 
+ *
+ *  GraphHopper GmbH licenses this file to you under the Apache License,
+ *  Version 2.0 (the "License"); you may not use this file except in
  *  compliance with the License. You may obtain a copy of the License at
- * 
+ *
  *       http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -17,30 +17,37 @@
  */
 package com.graphhopper.storage;
 
-import com.graphhopper.util.Helper;
 import java.io.File;
-import java.nio.ByteOrder;
-import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
+
+import static com.graphhopper.storage.DAType.RAM_INT;
+import static com.graphhopper.util.Helper.*;
 
 /**
  * Implements some common methods for the subclasses.
- * <p/>
+ *
  * @author Peter Karich
  */
-public class GHDirectory implements Directory
-{
-    protected Map<String, DataAccess> map = new HashMap<String, DataAccess>();
-    protected Map<String, DAType> types = new HashMap<String, DAType>();
+public class GHDirectory implements Directory {
     protected final String location;
-    private final DAType defaultType;
-    private final ByteOrder byteOrder = ByteOrder.LITTLE_ENDIAN;
+    private final DAType typeFallback;
+    // first rule matches => LinkedHashMap
+    private final Map<String, DAType> defaultTypes = new LinkedHashMap<>();
+    private final Map<String, Integer> mmapPreloads = new LinkedHashMap<>();
+    private final Map<String, DataAccess> map = Collections.synchronizedMap(new HashMap<>());
+    private final int defaultSegmentSize;
+    private boolean readOnly;
 
-    public GHDirectory( String _location, DAType defaultType )
-    {
-        this.defaultType = defaultType;
-        if (Helper.isEmpty(_location))
+    public GHDirectory(String _location, DAType defaultType) {
+        this(_location, defaultType, AbstractDataAccess.SEGMENT_SIZE_DEFAULT);
+    }
+
+    public GHDirectory(String _location, DAType defaultType, int defaultSegmentSize) {
+        this.typeFallback = defaultType;
+        if (isEmpty(_location))
             _location = new File("").getAbsolutePath();
 
         if (!_location.endsWith("/"))
@@ -51,165 +58,161 @@ public class GHDirectory implements Directory
         if (dir.exists() && !dir.isDirectory())
             throw new RuntimeException("file '" + dir + "' exists but is not a directory");
 
-        // set default access to integer based
-        // improves performance on server side, 10% faster for queries and preparation
-        if (this.defaultType.isInMemory())
-        {
-            if (isStoring())
-            {
-                put("locationIndex", DAType.RAM_INT_STORE);
-                put("edges", DAType.RAM_INT_STORE);
-                put("nodes", DAType.RAM_INT_STORE);
-            } else
-            {
-                put("locationIndex", DAType.RAM_INT);
-                put("edges", DAType.RAM_INT);
-                put("nodes", DAType.RAM_INT);
+        this.defaultSegmentSize = defaultSegmentSize;
+    }
+
+    /**
+     * Configure the DAType (specified by the value) of a single DataAccess object (specified by the key). For "MMAP" you
+     * can prepend "preload." to the name and specify a percentage which preloads the DataAccess into physical memory of
+     * the specified percentage (only applied for load, not for import).
+     * As keys can be patterns the order is important and the LinkedHashMap is forced as type.
+     */
+    public Directory configure(LinkedHashMap<String, String> config) {
+        for (Map.Entry<String, String> kv : config.entrySet()) {
+            String value = kv.getValue().trim();
+            if (kv.getKey().startsWith("preload."))
+                try {
+                    String pattern = kv.getKey().substring("preload.".length());
+                    mmapPreloads.put(pattern, Integer.parseInt(value));
+                } catch (NumberFormatException ex) {
+                    throw new IllegalArgumentException("DataAccess " + kv.getKey() + " has an incorrect preload value: " + value);
+                }
+            else {
+                String pattern = kv.getKey();
+                defaultTypes.put(pattern, DAType.fromString(value));
             }
         }
-        mkdirs();
-    }
-
-    @Override
-    public ByteOrder getByteOrder()
-    {
-        return byteOrder;
-    }
-
-    public Directory put( String name, DAType type )
-    {
-        types.put(name, type);
         return this;
     }
 
-    @Override
-    public DataAccess find( String name )
-    {
-        DAType type = types.get(name);
-        if (type == null)
-            type = defaultType;
+    /**
+     * Returns the preload value or 0 if no patterns match.
+     * See {@link #configure(LinkedHashMap)}
+     */
+    int getPreload(String name) {
+        for (Map.Entry<String, Integer> entry : mmapPreloads.entrySet())
+            if (name.matches(entry.getKey())) return entry.getValue();
+        return 0;
+    }
 
-        return find(name, type);
+    public void loadMMap() {
+        for (DataAccess da : map.values()) {
+            int preload = getPreload(da.getName());
+            if (preload <= 0)
+                continue;
+            if (da instanceof MMapDataAccess)
+                ((MMapDataAccess) da).load(preload);
+            else if (da instanceof MMapForeignMemoryDataAccess)
+                ((MMapForeignMemoryDataAccess) da).load(preload);
+        }
     }
 
     @Override
-    public DataAccess find( String name, DAType type )
-    {
-        DataAccess da = map.get(name);
-        if (da != null)
-        {
-            if (!type.equals(da.getType()))
-                throw new IllegalStateException("Found existing DataAccess object '" + name
-                        + "' but types did not match. Requested:" + type + ", was:" + da.getType());
-            return da;
-        }
+    public DataAccess create(String name) {
+        return create(name, getDefault(name, typeFallback));
+    }
 
-        if (type.isInMemory())
-        {
-            if (type.isInteg())
-            {
-                if (type.isStoring())
-                    da = new RAMIntDataAccess(name, location, true, byteOrder);
-                else
-                    da = new RAMIntDataAccess(name, location, false, byteOrder);
-            } else
-            {
-                if (type.isStoring())
-                    da = new RAMDataAccess(name, location, true, byteOrder);
-                else
-                    da = new RAMDataAccess(name, location, false, byteOrder);
-            }
-        } else if (type.isMMap())
-        {            
-            da = new MMapDataAccess(name, location, byteOrder, type.isAllowWrites());
-        } else
-        {
-            da = new UnsafeDataAccess(name, location, byteOrder);
-        }
+    @Override
+    public DataAccess create(String name, int segmentSize) {
+        return create(name, getDefault(name, typeFallback), segmentSize);
+    }
 
-        if (type.isSynched())
-            da = new SynchedDAWrapper(da);
+    private DAType getDefault(String name, DAType typeFallback) {
+        for (Map.Entry<String, DAType> entry : defaultTypes.entrySet())
+            if (name.matches(entry.getKey())) return entry.getValue();
+        return typeFallback;
+    }
 
+    @Override
+    public DataAccess create(String name, DAType type) {
+        return create(name, type, defaultSegmentSize);
+    }
+
+    @Override
+    public DataAccess create(String name, DAType type, int segmentSize) {
+        if (!name.equals(toLowerCase(name)))
+            throw new IllegalArgumentException("Since 0.7 DataAccess objects does no longer accept upper case names");
+
+        if (map.containsKey(name))
+            // we do not allow creating two DataAccess with the same name, because on disk there can only be one DA
+            // per file name
+            throw new IllegalStateException("DataAccess " + name + " has already been created");
+
+        DataAccess da = type.create(name, location, segmentSize, getPreload(name), readOnly);
         map.put(name, da);
         return da;
     }
 
     @Override
-    public void clear()
-    {
-        // If there is at least one MMap DA then do not apply the cleanHack 
-        // for every single mmap DA as this is very slow if lots of DataAccess objects were collected 
-        // => forceClean == false
-
-        MMapDataAccess mmapDA = null;
-        for (DataAccess da : map.values())
-        {
-            if (da instanceof MMapDataAccess)
-                mmapDA = (MMapDataAccess) da;
-
-            removeDA(da, da.getName(), false);
+    public void close() {
+        for (DataAccess da : map.values()) {
+            da.close();
         }
-        if (mmapDA != null)
-            Helper.cleanHack();
         map.clear();
     }
 
     @Override
-    public void remove( DataAccess da )
-    {
-        removeFromMap(da.getName());
-        removeDA(da, da.getName(), true);
-    }
-
-    void removeDA( DataAccess da, String name, boolean forceClean )
-    {
-        if (da instanceof MMapDataAccess)
-            ((MMapDataAccess) da).close(forceClean);
-        else
+    public void clear() {
+        for (DataAccess da : map.values()) {
             da.close();
-
-        if (da.getType().isStoring())
-            Helper.removeDir(new File(location + name));
-    }
-
-    void removeFromMap( String name )
-    {
-        DataAccess da = map.remove(name);
-        if (da == null)
-            throw new IllegalStateException("Couldn't remove dataAccess object:" + name);
+            removeBackingFile(da, da.getName());
+        }
+        map.clear();
     }
 
     @Override
-    public DAType getDefaultType()
-    {
-        return defaultType;
+    public void remove(String name) {
+        DataAccess old = map.remove(name);
+        if (old == null)
+            throw new IllegalStateException("Couldn't remove DataAccess: " + name);
+
+        old.close();
+        removeBackingFile(old, name);
     }
 
-    public boolean isStoring()
-    {
-        return defaultType.isStoring();
-    }
-
-    protected void mkdirs()
-    {
-        if (isStoring())
-            new File(location).mkdirs();
-    }
-
-    Collection<DataAccess> getAll()
-    {
-        return map.values();
+    private void removeBackingFile(DataAccess da, String name) {
+        // removeDir is a no-op if the file was never written (purely in-memory)
+        removeDir(new File(location + name));
     }
 
     @Override
-    public String toString()
-    {
+    public DAType getDefaultType() {
+        return typeFallback;
+    }
+
+    /**
+     * This method returns the default DAType of the specified DataAccess (as string). If preferInts is true then this
+     * method returns e.g. RAM_INT if the type of the specified DataAccess is RAM.
+     */
+    public DAType getDefaultType(String dataAccess, boolean preferInts) {
+        DAType type = getDefault(dataAccess, typeFallback);
+        if (preferInts && type.isOnHeap())
+            return RAM_INT;
+        return type;
+    }
+
+    /**
+     * Marks this Directory as read-only, e.g. for a read-only filesystem: the backing files of all
+     * DataAccess objects created afterwards must not be modified. Memory mapped types map them
+     * read-only (enforced by the OS), all other types throw on flush.
+     */
+    public GHDirectory setReadOnly(boolean readOnly) {
+        this.readOnly = readOnly;
+        return this;
+    }
+
+    @Override
+    public String toString() {
         return getLocation();
     }
 
     @Override
-    public String getLocation()
-    {
+    public String getLocation() {
         return location;
+    }
+
+    @Override
+    public Map<String, DataAccess> getDAs() {
+        return map;
     }
 }

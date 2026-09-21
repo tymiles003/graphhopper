@@ -1,10 +1,10 @@
 /*
- *  Licensed to GraphHopper and Peter Karich under one or more contributor
- *  license agreements. See the NOTICE file distributed with this work for 
+ *  Licensed to GraphHopper GmbH under one or more contributor
+ *  license agreements. See the NOTICE file distributed with this work for
  *  additional information regarding copyright ownership.
  *
- *  GraphHopper licenses this file to you under the Apache License, 
- *  Version 2.0 (the "License"); you may not use this file except in 
+ *  GraphHopper GmbH licenses this file to you under the Apache License,
+ *  Version 2.0 (the "License"); you may not use this file except in
  *  compliance with the License. You may obtain a copy of the License at
  *
  *       http://www.apache.org/licenses/LICENSE-2.0
@@ -17,69 +17,91 @@
  */
 package com.graphhopper.storage;
 
-import com.graphhopper.util.Constants;
 import com.graphhopper.util.Helper;
-import java.io.IOException;
-import java.io.StringReader;
-import java.io.StringWriter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.*;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import static com.graphhopper.util.Helper.*;
+
 /**
- * Writes an in-memory HashMap into a file on flush.
- * <p/>
+ * Writes an in-memory HashMap into a file on flush. Thread safe, see #743.
+ *
  * @author Peter Karich
  */
-public class StorableProperties implements Storable<StorableProperties>
-{
-    private final Map<String, String> map = new LinkedHashMap<String, String>();
-    private final DataAccess da;
+public class StorableProperties {
 
-    public StorableProperties( Directory dir )
-    {
-        this.da = dir.find("properties");
+    private static final Logger LOGGER = LoggerFactory.getLogger(StorableProperties.class);
+
+    private final Map<String, String> map = new LinkedHashMap<>();
+    private final DataAccess da;
+    private final Directory dir;
+
+    public StorableProperties(Directory dir) {
+        this.dir = dir;
         // reduce size
-        da.setSegmentSize(1 << 15);
+        int segmentSize = 1 << 15;
+        this.da = dir.create("properties", segmentSize);
     }
 
-    @Override
-    public boolean loadExisting()
-    {
+    public synchronized boolean loadExisting() {
         if (!da.loadExisting())
             return false;
 
+        if (da.getCapacity() > Integer.MAX_VALUE) {
+            throw new IllegalStateException("Properties file is too large: " + da.getCapacity());
+        }
         int len = (int) da.getCapacity();
         byte[] bytes = new byte[len];
-        da.getBytes(0, bytes, len);
-        try
-        {
-            Helper.loadProperties(map, new StringReader(new String(bytes, Helper.UTF_CS)));
+        int segmentSize = da.getSegmentSize();
+        for (int bytePos = 0; bytePos < len; bytePos += segmentSize) {
+            int partLen = Math.min(bytes.length - bytePos, segmentSize);
+            byte[] part = new byte[partLen];
+            da.getBytes(bytePos, part, part.length);
+            System.arraycopy(part, 0, bytes, bytePos, partLen);
+        }
+        try {
+            loadProperties(map, new StringReader(new String(bytes, UTF_CS)));
             return true;
-        } catch (IOException ex)
-        {
+        } catch (IOException ex) {
             throw new IllegalStateException(ex);
         }
     }
 
-    @Override
-    public void flush()
-    {
-        try
-        {
-            StringWriter sw = new StringWriter();
-            Helper.saveProperties(map, sw);
-            // TODO at the moment the size is limited to da.segmentSize() !
-            byte[] bytes = sw.toString().getBytes(Helper.UTF_CS);
-            da.setBytes(0, bytes, bytes.length);
-            da.flush();
-        } catch (IOException ex)
-        {
-            throw new RuntimeException(ex);
+    public synchronized void flush() {
+        String props = saveProperties(map);
+        byte[] bytes = props.getBytes(UTF_CS);
+        da.ensureCapacity(bytes.length);
+        int segmentSize = da.getSegmentSize();
+        for (int bytePos = 0; bytePos < bytes.length; bytePos += segmentSize) {
+            int partLen = Math.min(bytes.length - bytePos, segmentSize);
+            byte[] part = Arrays.copyOfRange(bytes, bytePos, bytePos + partLen);
+            da.setBytes(bytePos, part, part.length);
+        }
+        da.flush();
+        // todo: would not be needed if the properties file used a format that is compatible with common text tools
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(dir.getLocation() + "/properties.txt"))) {
+            writer.write(props);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
         }
     }
 
-    public StorableProperties put( String key, String val )
-    {
+    public synchronized StorableProperties remove(String key) {
+        map.remove(key);
+        return this;
+    }
+
+    public synchronized StorableProperties putAll(Map<String, String> externMap) {
+        map.putAll(externMap);
+        return this;
+    }
+
+    public synchronized StorableProperties put(String key, String val) {
         map.put(key, val);
         return this;
     }
@@ -87,114 +109,91 @@ public class StorableProperties implements Storable<StorableProperties>
     /**
      * Before it saves this value it creates a string out of it.
      */
-    public StorableProperties put( String key, Object val )
-    {
+    public synchronized StorableProperties put(String key, Object val) {
+        if (!key.equals(toLowerCase(key)))
+            throw new IllegalArgumentException("Do not use upper case keys (" + key + ") for StorableProperties since 0.7");
+
         map.put(key, val.toString());
         return this;
     }
 
-    public String get( String key )
-    {
-        String ret = map.get(key);
-        if (ret == null)
-        {
-            return "";
-        }
-        return ret;
+    public synchronized String get(String key) {
+        if (!key.equals(toLowerCase(key)))
+            throw new IllegalArgumentException("Do not use upper case keys (" + key + ") for StorableProperties since 0.7");
+        return map.getOrDefault(key, "");
     }
 
-    @Override
-    public void close()
-    {
+    public synchronized Map<String, String> getAll() {
+        return map;
+    }
+
+    public synchronized void close() {
         da.close();
     }
 
-    @Override
-    public boolean isClosed()
-    {
+    public synchronized boolean isClosed() {
         return da.isClosed();
-    }        
+    }
 
-    @Override
-    public StorableProperties create( long size )
-    {
+    public synchronized StorableProperties create(long size) {
         da.create(size);
         return this;
     }
 
-    @Override
-    public long getCapacity()
-    {
+    public Directory getDirectory() {
+        return dir;
+    }
+
+    public synchronized long getCapacity() {
         return da.getCapacity();
     }
 
-    public void putCurrentVersions()
-    {
-        put("nodes.version", Constants.VERSION_NODE);
-        put("edges.version", Constants.VERSION_EDGE);
-        put("geometry.version", Constants.VERSION_GEOMETRY);
-        put("locationIndex.version", Constants.VERSION_LOCATION_IDX);
-        put("nameIndex.version", Constants.VERSION_NAME_IDX);
-    }
-
-    public String versionsToString()
-    {
-        return get("nodes.version") + ","
-                + get("edges.version") + ","
-                + get("geometry.version") + ","
-                + get("locationIndex.version") + ","
-                + get("nameIndex.version");
-    }
-
-    public boolean checkVersions( boolean silent )
-    {
-        if (!check("nodes", Constants.VERSION_NODE, silent))
-        {
-            return false;
-        }
-        if (!check("edges", Constants.VERSION_EDGE, silent))
-        {
-            return false;
-        }
-        if (!check("geometry", Constants.VERSION_GEOMETRY, silent))
-        {
-            return false;
-        }
-        if (!check("locationIndex", Constants.VERSION_LOCATION_IDX, silent))
-        {
-            return false;
-        }
-        if (!check("nameIndex", Constants.VERSION_NAME_IDX, silent))
-        {
-            return false;
-        }
-        return true;
-    }
-
-    boolean check( String key, int vers, boolean silent )
-    {
-        String str = get(key + ".version");
-        if (!str.equals(vers + ""))
-        {
-            if (silent)
-            {
-                return false;
-            }
-            throw new IllegalStateException("Version of " + key + " unsupported: " + str + ", expected:" + vers);
-        }
-        return true;
-    }
-
-    public void copyTo( StorableProperties properties )
-    {
-        properties.map.clear();
-        properties.map.putAll(map);
-        da.copyTo(properties.da);
+    public synchronized boolean containsVersion() {
+        return map.containsKey("nodes.version") ||
+                map.containsKey("edges.version") ||
+                map.containsKey("geometry.version") ||
+                map.containsKey("location_index.version") ||
+                map.containsKey("string_index.version");
     }
 
     @Override
-    public String toString()
-    {
+    public synchronized String toString() {
         return da.toString();
+    }
+
+    static String saveProperties(Map<String, String> map) {
+        StringBuilder builder = new StringBuilder();
+        for (Map.Entry<String, String> e : map.entrySet()) {
+            builder.append(e.getKey());
+            builder.append('=');
+            builder.append(e.getValue());
+            builder.append('\n');
+        }
+        return builder.toString();
+    }
+
+    static void loadProperties(Map<String, String> map, Reader tmpReader) throws IOException {
+        try (BufferedReader reader = new BufferedReader(tmpReader)) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.startsWith("//") || line.startsWith("#")) {
+                    continue;
+                }
+
+                if (Helper.isEmpty(line)) {
+                    continue;
+                }
+
+                int index = line.indexOf("=");
+                if (index < 0) {
+                    LOGGER.warn("Skipping configuration at line:" + line);
+                    continue;
+                }
+
+                String field = line.substring(0, index);
+                String value = line.substring(index + 1);
+                map.put(field.trim(), value.trim());
+            }
+        }
     }
 }

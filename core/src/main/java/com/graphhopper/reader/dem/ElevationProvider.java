@@ -1,12 +1,11 @@
 /*
- *  Licensed to Peter Karich under one or more contributor license
- *  agreements. See the NOTICE file distributed with this work for
+ *  Licensed to GraphHopper GmbH under one or more contributor
+ *  license agreements. See the NOTICE file distributed with this work for
  *  additional information regarding copyright ownership.
  *
- *  Peter Karich licenses this file to you under the Apache License,
- *  Version 2.0 (the "License"); you may not use this file except
- *  in compliance with the License. You may obtain a copy of the
- *  License at
+ *  GraphHopper GmbH licenses this file to you under the Apache License,
+ *  Version 2.0 (the "License"); you may not use this file except in
+ *  compliance with the License. You may obtain a copy of the License at
  *
  *       http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -18,81 +17,56 @@
  */
 package com.graphhopper.reader.dem;
 
-import com.graphhopper.storage.DAType;
-import java.io.File;
+import com.graphhopper.reader.ReaderNode;
 
 /**
  * @author Peter Karich
  */
-public interface ElevationProvider
-{
-    /**
-     * @return returns the hight in meter or Double.NaN if invalid
-     */
-    double getEle( double lat, double lon );
+public interface ElevationProvider {
+    ElevationProvider NOOP = new ElevationProvider() {
+
+        @Override
+        public ElevationProvider init() {
+            return this;
+        }
+
+        @Override
+        public double getEle(double lat, double lon) {
+            return Double.NaN;
+        }
+
+        @Override
+        public void release() {
+        }
+
+        @Override
+        public boolean canInterpolate() {
+            return false;
+        }
+    };
+
+    ElevationProvider init();
 
     /**
-     * Specifies the service URL where to download the elevation data. An empty string should set it
-     * to the default URL. Default is a provider-dependent URL which should work out of the box.
+     * @return returns the height in meters or Double.NaN if invalid
      */
-    ElevationProvider setBaseURL( String baseURL );
+    double getEle(double lat, double lon);
 
     /**
-     * Specifies the directory where to temporarily store the elevation data after fetched from base
-     * URL. Default is a custom provider-dependent subdirectory in '/tmp'
+     * @param node Node to read
+     * @return returns the height in meters or Double.NaN if invalid
      */
-    ElevationProvider setCacheDir( File cacheDir );
+    default double getEle(ReaderNode node) {
+        return getEle(node.getLat(), node.getLon());
+    }
 
     /**
-     * Set to true if you have a small area and need high speed access. Default is DAType.MMAP
+     * Returns true if bilinear interpolation is enabled.
      */
-    ElevationProvider setDAType( DAType daType );
-
-    /**
-     * Configuration option to include surrounding elevation points when fetching the elevation. Has
-     * only an effect if called before the first getEle call. Turned off by default.
-     */
-    void setCalcMean( boolean calcMean );
+    boolean canInterpolate();
 
     /**
      * Release resources.
      */
     void release();
-
-    public final static ElevationProvider NOOP = new ElevationProvider()
-    {
-        @Override
-        public double getEle( double lat, double lon )
-        {
-            return Double.NaN;
-        }
-
-        @Override
-        public ElevationProvider setCacheDir( File cacheDir )
-        {
-            return this;
-        }
-
-        @Override
-        public ElevationProvider setBaseURL( String baseURL )
-        {
-            return this;
-        }
-
-        @Override
-        public ElevationProvider setDAType( DAType daType )
-        {
-            return this;
-        }
-
-        @Override
-        public void release()
-        {
-        }
-
-        @Override
-        public void setCalcMean( boolean eleCalcMean )
-        {
-        }
-    };
 }

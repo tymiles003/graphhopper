@@ -1,14 +1,14 @@
 /*
- *  Licensed to GraphHopper and Peter Karich under one or more contributor
- *  license agreements. See the NOTICE file distributed with this work for 
+ *  Licensed to GraphHopper GmbH under one or more contributor
+ *  license agreements. See the NOTICE file distributed with this work for
  *  additional information regarding copyright ownership.
- * 
- *  GraphHopper licenses this file to you under the Apache License, 
- *  Version 2.0 (the "License"); you may not use this file except in 
+ *
+ *  GraphHopper GmbH licenses this file to you under the Apache License,
+ *  Version 2.0 (the "License"); you may not use this file except in
  *  compliance with the License. You may obtain a copy of the License at
- * 
+ *
  *       http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -21,9 +21,7 @@ package com.graphhopper.util;
  * Iterates through all edges of one node. Avoids object creation in-between via direct access
  * methods. If you want to access some properties of an 'edge' (i.e. the current state) for later
  * usage store it via edgeIterator.detach() or edgeIterator.getEdge() instead of the iterator
- * itself.
- * <p/>
- * Usage:
+ * itself. Usage:
  * <pre>
  * EdgeExplorer explorer = graph.createEdgeExplorer();
  * EdgeIterator iter = explorer.setBaseNode(nodeId);
@@ -33,31 +31,42 @@ package com.graphhopper.util;
  *   int adjacentNodeId = iter.getAdjNode(); // this is the node where this edge state is "pointing to"
  *   ...
  * }
+ * </pre>
+ * <p>
  *
+ * @author Peter Karich
  * @see EdgeIteratorState
  * @see EdgeExplorer
- * @author Peter Karich
  */
-public interface EdgeIterator extends EdgeIteratorState
-{
+public interface EdgeIterator extends EdgeIteratorState {
+    /**
+     * Integer value used in places where normally an edge would be expected, but none is given. For example in the
+     * shortest path tree of route calculations every child element should have an incoming edge, but for the root item
+     * there is no parent so we would use this value instead.
+     */
+    int NO_EDGE = -1;
+
+    /**
+     * Integer value used in places where normally an edge would be expected, but no specific edge shall be specified.
+     */
+    int ANY_EDGE = -2;
+
     /**
      * To be called to go to the next edge state.
      * <p>
+     *
      * @return true if an edge state is available
      */
     boolean next();
 
-    /**
-     * integer value to indicate if an edge is valid or not which then would be initialized with
-     * this value
-     */
-    public static final int NO_EDGE = -1;
-
-    static class Edge
-    {
-        public static boolean isValid( int edgeId )
-        {
-            return edgeId > NO_EDGE;
+    class Edge {
+        /**
+         * Checks if a given integer edge ID is valid or not. Edge IDs >= 0 are considered valid, while negative
+         * values are considered as invalid. However, some negative values are used as special values, e.g. {@link
+         * #NO_EDGE}.
+         */
+        public static boolean isValid(int edgeId) {
+            return edgeId >= 0;
         }
     }
 }

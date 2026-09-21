@@ -1,14 +1,14 @@
 /*
- *  Licensed to GraphHopper and Peter Karich under one or more contributor
- *  license agreements. See the NOTICE file distributed with this work for 
+ *  Licensed to GraphHopper GmbH under one or more contributor
+ *  license agreements. See the NOTICE file distributed with this work for
  *  additional information regarding copyright ownership.
- * 
- *  GraphHopper licenses this file to you under the Apache License, 
- *  Version 2.0 (the "License"); you may not use this file except in 
+ *
+ *  GraphHopper GmbH licenses this file to you under the Apache License,
+ *  Version 2.0 (the "License"); you may not use this file except in
  *  compliance with the License. You may obtain a copy of the License at
- * 
+ *
  *       http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -17,186 +17,184 @@
  */
 package com.graphhopper.routing;
 
-import com.graphhopper.util.DistancePlaneProjection;
-import gnu.trove.map.TIntObjectMap;
-import gnu.trove.map.hash.TIntObjectHashMap;
+import com.graphhopper.coll.GHIntObjectHashMap;
+import com.graphhopper.routing.util.TraversalMode;
+import com.graphhopper.routing.weighting.BeelineWeightApproximator;
+import com.graphhopper.routing.weighting.WeightApproximator;
+import com.graphhopper.routing.weighting.Weighting;
+import com.graphhopper.storage.Graph;
+import com.graphhopper.util.*;
 
 import java.util.PriorityQueue;
 
-import com.graphhopper.routing.util.FlagEncoder;
-import com.graphhopper.routing.util.TraversalMode;
-import com.graphhopper.routing.util.Weighting;
-import com.graphhopper.routing.util.WeightApproximator;
-import com.graphhopper.routing.util.BeelineWeightApproximator;
-import com.graphhopper.storage.EdgeEntry;
-import com.graphhopper.storage.Graph;
-import com.graphhopper.util.EdgeExplorer;
-import com.graphhopper.util.EdgeIterator;
+import static com.graphhopper.util.EdgeIterator.ANY_EDGE;
+import static com.graphhopper.util.EdgeIterator.NO_EDGE;
 
 /**
  * This class implements the A* algorithm according to
  * http://en.wikipedia.org/wiki/A*_search_algorithm
- * <p/>
+ * <p>
  * Different distance calculations can be used via setApproximation.
- * <p/>
+ * <p>
+ *
  * @author Peter Karich
  */
-public class AStar extends AbstractRoutingAlgorithm
-{
+public class AStar extends AbstractRoutingAlgorithm implements EdgeToEdgeRoutingAlgorithm {
+    private GHIntObjectHashMap<AStarEntry> fromMap;
+    private PriorityQueue<AStarEntry> fromHeap;
+    private AStarEntry currEdge;
+    private int visitedNodes;
+    private int to = -1;
     private WeightApproximator weightApprox;
-    private int visitedCount;
-    private TIntObjectMap<AStarEdge> fromMap;
-    private PriorityQueue<AStarEdge> prioQueueOpenSet;
-    private AStarEdge currEdge;
-    private int to1 = -1;
+    private int fromOutEdge;
+    private int toInEdge;
 
-    public AStar( Graph g, FlagEncoder encoder, Weighting weighting, TraversalMode tMode )
-    {
-        super(g, encoder, weighting, tMode);
-        initCollections(1000);
+    public AStar(Graph graph, Weighting weighting, TraversalMode tMode) {
+        super(graph, weighting, tMode);
+        int size = Math.min(Math.max(200, graph.getNodes() / 10), 2000);
+        initCollections(size);
         BeelineWeightApproximator defaultApprox = new BeelineWeightApproximator(nodeAccess, weighting);
-        defaultApprox.setDistanceCalc(new DistancePlaneProjection());
+        defaultApprox.setDistanceCalc(DistancePlaneProjection.DIST_PLANE);
         setApproximation(defaultApprox);
     }
 
     /**
      * @param approx defines how distance to goal Node is approximated
      */
-    public AStar setApproximation( WeightApproximator approx )
-    {
+    public AStar setApproximation(WeightApproximator approx) {
         weightApprox = approx;
         return this;
     }
 
-    protected void initCollections( int size )
-    {
-        fromMap = new TIntObjectHashMap<AStarEdge>();
-        prioQueueOpenSet = new PriorityQueue<AStarEdge>(size);
+    protected void initCollections(int size) {
+        fromMap = new GHIntObjectHashMap<>();
+        fromHeap = new PriorityQueue<>(size);
     }
 
     @Override
-    public Path calcPath( int from, int to )
-    {
-        checkAlreadyRun();
-        to1 = to;
-        weightApprox.setGoalNode(to);
-        currEdge = createEdgeEntry(from, 0);
-        if (!traversalMode.isEdgeBased())
-        {
-            fromMap.put(from, currEdge);
-        }
-        return runAlgo();
+    public Path calcPath(int from, int to) {
+        return calcPath(from, to, EdgeIterator.ANY_EDGE, EdgeIterator.ANY_EDGE);
     }
 
-    private Path runAlgo()
-    {
-        double currWeightToGoal, distEstimation;
-        EdgeExplorer explorer = outEdgeExplorer;
-        while (true)
-        {
-            int currVertex = currEdge.adjNode;
-            visitedCount++;
-            if (isWeightLimitReached())
-                return createEmptyPath();
-
-            if (finished())
-                break;
-
-            EdgeIterator iter = explorer.setBaseNode(currVertex);
-            while (iter.next())
-            {
-                if (!accept(iter, currEdge.edge))
-                    continue;
-
-                int neighborNode = iter.getAdjNode();
-                int traversalId = traversalMode.createTraversalId(iter, false);
-                // cast to float to avoid rounding errors in comparison to float entry of AStarEdge weight
-                float alreadyVisitedWeight = (float) (weighting.calcWeight(iter, false, currEdge.edge)
-                        + currEdge.weightOfVisitedPath);
-                if (Double.isInfinite(alreadyVisitedWeight))
-                    continue;
-
-                AStarEdge ase = fromMap.get(traversalId);
-                if ((ase == null) || ase.weightOfVisitedPath > alreadyVisitedWeight)
-                {
-                    currWeightToGoal = weightApprox.approximate(neighborNode);
-                    distEstimation = alreadyVisitedWeight + currWeightToGoal;
-                    if (ase == null)
-                    {
-                        ase = new AStarEdge(iter.getEdge(), neighborNode, distEstimation, alreadyVisitedWeight);
-                        fromMap.put(traversalId, ase);
-                    } else
-                    {
-                        assert (ase.weight > distEstimation) : "Inconsistent distance estimate";
-                        prioQueueOpenSet.remove(ase);
-                        ase.edge = iter.getEdge();
-                        ase.weight = distEstimation;
-                        ase.weightOfVisitedPath = alreadyVisitedWeight;
-                    }
-
-                    ase.parent = currEdge;
-                    prioQueueOpenSet.add(ase);
-
-                    updateBestPath(iter, ase, traversalId);
-                }
-            }
-
-            if (prioQueueOpenSet.isEmpty())
-                return createEmptyPath();
-
-            currEdge = prioQueueOpenSet.poll();
-            if (currEdge == null)
-                throw new AssertionError("Empty edge cannot happen");
+    @Override
+    public Path calcPath(int from, int to, int fromOutEdge, int toInEdge) {
+        if ((fromOutEdge != ANY_EDGE || toInEdge != ANY_EDGE) && !traversalMode.isEdgeBased()) {
+            throw new IllegalArgumentException("Restricting the start/target edges is only possible for edge-based graph traversal");
         }
-
+        this.fromOutEdge = fromOutEdge;
+        this.toInEdge = toInEdge;
+        checkAlreadyRun();
+        setupFinishTime();
+        this.to = to;
+        if (fromOutEdge == NO_EDGE || toInEdge == NO_EDGE)
+            return extractPath();
+        weightApprox.setTo(to);
+        double weightToGoal = weightApprox.approximate(from);
+        if (Double.isInfinite(weightToGoal))
+            return extractPath();
+        AStarEntry startEntry = new AStarEntry(EdgeIterator.NO_EDGE, from, 0 + weightToGoal, 0);
+        fromHeap.add(startEntry);
+        if (!traversalMode.isEdgeBased())
+            fromMap.put(from, currEdge);
+        runAlgo();
         return extractPath();
     }
 
-    @Override
-    protected Path extractPath()
-    {
-        return new Path(graph, flagEncoder).setWeight(currEdge.weight).setEdgeEntry(currEdge).extract();
+    private void runAlgo() {
+        double currWeightToGoal, estimationFullWeight;
+        while (!fromHeap.isEmpty()) {
+            currEdge = fromHeap.poll();
+            if (currEdge.isDeleted())
+                continue;
+            visitedNodes++;
+            if (isMaxVisitedNodesExceeded() || finished() || isTimeoutExceeded())
+                break;
+
+            int currNode = currEdge.adjNode;
+            EdgeIterator iter = edgeExplorer.setBaseNode(currNode);
+            while (iter.next()) {
+                if (!accept(iter, currEdge.edge) || (currEdge.edge == NO_EDGE && fromOutEdge != ANY_EDGE && iter.getEdge() != fromOutEdge))
+                    continue;
+
+                double tmpWeight = GHUtility.calcWeightWithTurnWeight(weighting, iter, false, currEdge.edge) + currEdge.weightOfVisitedPath;
+                if (Double.isInfinite(tmpWeight)) {
+                    continue;
+                }
+                int traversalId = traversalMode.createTraversalId(iter, false);
+
+                AStarEntry ase = fromMap.get(traversalId);
+                if (ase == null || ase.weightOfVisitedPath > tmpWeight) {
+                    int neighborNode = iter.getAdjNode();
+                    currWeightToGoal = weightApprox.approximate(neighborNode);
+                    if (Double.isInfinite(currWeightToGoal))
+                        continue;
+                    estimationFullWeight = tmpWeight + currWeightToGoal;
+                    if (ase == null) {
+                        ase = new AStarEntry(iter.getEdge(), neighborNode, estimationFullWeight, tmpWeight, currEdge);
+                        fromMap.put(traversalId, ase);
+                    } else {
+//                        assert (ase.weight > 0.9999999 * estimationFullWeight) : "Inconsistent distance estimate. It is expected weight >= estimationFullWeight but was "
+//                                + ase.weight + " < " + estimationFullWeight + " (" + ase.weight / estimationFullWeight + "), and weightOfVisitedPath:"
+//                                + ase.weightOfVisitedPath + " vs. alreadyVisitedWeight:" + alreadyVisitedWeight + " (" + ase.weightOfVisitedPath / alreadyVisitedWeight + ")";
+                        ase.setDeleted();
+                        ase = new AStarEntry(iter.getEdge(), neighborNode, estimationFullWeight, tmpWeight, currEdge);
+                        fromMap.put(traversalId, ase);
+                    }
+                    fromHeap.add(ase);
+                    updateBestPath(iter, ase, traversalId);
+                }
+            }
+        }
+    }
+
+    private boolean finished() {
+        return currEdge.adjNode == to && (toInEdge == ANY_EDGE || currEdge.edge == toInEdge) && (fromOutEdge == ANY_EDGE || currEdge.edge != NO_EDGE);
+    }
+
+    protected Path extractPath() {
+        if (currEdge == null || !finished())
+            return createEmptyPath();
+
+        return PathExtractor.extractPath(graph, weighting, currEdge)
+                // the path extractor uses currEdge.weight to set the weight, but this is the one that includes the
+                // A* approximation, not the weight of the visited path! this is still correct, because the approximation
+                // at the to-node (the end of the route) must be zero. Still it seems clearer to set the weight explicitly.
+                .setWeight(currEdge.getWeightOfVisitedPath());
     }
 
     @Override
-    protected AStarEdge createEdgeEntry( int node, double dist )
-    {
-        return new AStarEdge(EdgeIterator.NO_EDGE, node, dist, dist);
+    public int getVisitedNodes() {
+        return visitedNodes;
     }
 
-    @Override
-    protected boolean finished()
-    {
-        return currEdge.adjNode == to1;
+    protected void updateBestPath(EdgeIteratorState edgeState, SPTEntry bestSPTEntry, int traversalId) {
     }
 
-    @Override
-    public int getVisitedNodes()
-    {
-        return visitedCount;
-    }
-
-    protected boolean isWeightLimitReached()
-    {
-        return currEdge.weight >= weightLimit;
-    }
-
-    public static class AStarEdge extends EdgeEntry
-    {
-        // the variable 'weight' is used to let heap select smallest *full* distance.
-        // but to compare distance we need it only from start:
+    public static class AStarEntry extends SPTEntry {
         double weightOfVisitedPath;
 
-        public AStarEdge( int edgeId, int adjNode, double weightForHeap, double weightOfVisitedPath )
-        {
-            super(edgeId, adjNode, weightForHeap);
-            this.weightOfVisitedPath = (float) weightOfVisitedPath;
+        public AStarEntry(int edgeId, int adjNode, double weightForHeap, double weightOfVisitedPath) {
+            this(edgeId, adjNode, weightForHeap, weightOfVisitedPath, null);
+        }
+
+        public AStarEntry(int edgeId, int adjNode, double weightForHeap, double weightOfVisitedPath, SPTEntry parent) {
+            super(edgeId, adjNode, weightForHeap, parent);
+            this.weightOfVisitedPath = weightOfVisitedPath;
+        }
+
+        @Override
+        public final double getWeightOfVisitedPath() {
+            return weightOfVisitedPath;
+        }
+
+        @Override
+        public AStarEntry getParent() {
+            return (AStarEntry) parent;
         }
     }
 
     @Override
-    public String getName()
-    {
-        return AlgorithmOptions.ASTAR;
+    public String getName() {
+        return Parameters.Algorithms.ASTAR + "|" + weightApprox;
     }
 }

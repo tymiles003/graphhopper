@@ -1,9 +1,9 @@
 /*
- *  Licensed to GraphHopper and Peter Karich under one or more contributor
+ *  Licensed to GraphHopper GmbH under one or more contributor
  *  license agreements. See the NOTICE file distributed with this work for
  *  additional information regarding copyright ownership.
  *
- *  GraphHopper licenses this file to you under the Apache License,
+ *  GraphHopper GmbH licenses this file to you under the Apache License,
  *  Version 2.0 (the "License"); you may not use this file except in
  *  compliance with the License. You may obtain a copy of the License at
  *
@@ -21,39 +21,46 @@ import java.io.*;
 import java.util.*;
 import java.util.Map.Entry;
 
+import static com.graphhopper.util.Helper.*;
+
 /**
- * A class which manages the translations in-memory. Translations are managed here:
- * https://docs.google.com/spreadsheet/ccc?key=0AmukcXek0JP6dGM4R1VTV2d3TkRSUFVQakhVeVBQRHc#gid=0
- * <p/>
- * See here for more information: ./docs/core/translations.md
+ * A class which manages the translations in-memory. See here for more information:
+ * ./docs/core/translations.md
  * <p>
+ *
  * @author Peter Karich
  */
-public class TranslationMap
-{
+public class TranslationMap {
     // ISO codes (639-1), use 'en_US' as reference
-    private static final List<String> LOCALES = Arrays.asList("bg", "ca", "de_DE", "el", "en_US", "es", "fil",
-            "fi", "fr", "gl", "he", "it", "ja", "ne", "nl", "pt_BR", "pt_PT", "ro", "ru", "si", "sk", "sv_SE", "tr", "uk",
-            "vi_VI", "zh_CN");
-    private final Map<String, Translation> translations = new HashMap<String, Translation>();
+    private static final List<String> LOCALES = Arrays.asList("ar", "ast", "bg", "bn_BN", "ca",
+            "cs_CZ", "da_DK", "de_DE", "el",
+            /* default for en -> must come first: */ "en_US", "en_AU",
+            "eo", "es", "fa", "fil", "fi",
+            "fr_FR", "fr_CH", "gl", "he", "hr_HR", "hsb", "hu_HU", "in_ID", "it", "ja", "kab_DZ", "ko",
+            "kz", "lt_LT", "mn", "nb_NO", "ne", "nl", "pl", "pt_BR", "pt_PT", "ro", "ru", "sk",
+            "sl_SI", "sr_RS", "sv_SE", "tr", "uk", "uz", "vi_VN", "zh_CN", "zh_HK", "zh_TW");
+
+    private final Map<String, Translation> translations = new HashMap<>();
+
+    public static int countOccurence(String phrase, String splitter) {
+        if (isEmpty(phrase))
+            return 0;
+        return phrase.trim().split(splitter).length;
+    }
 
     /**
      * This loads the translation files from the specified folder.
      */
-    public TranslationMap doImport( File folder )
-    {
-        try
-        {
-            for (String locale : LOCALES)
-            {
-                TranslationHashMap trMap = new TranslationHashMap(Helper.getLocale(locale));
+    public TranslationMap doImport(File folder) {
+        try {
+            for (String locale : LOCALES) {
+                TranslationHashMap trMap = new TranslationHashMap(getLocale(locale));
                 trMap.doImport(new FileInputStream(new File(folder, locale + ".txt")));
                 add(trMap);
             }
             postImportHook();
             return this;
-        } catch (Exception ex)
-        {
+        } catch (Exception ex) {
             throw new RuntimeException(ex);
         }
     }
@@ -61,50 +68,47 @@ public class TranslationMap
     /**
      * This loads the translation files from classpath.
      */
-    public TranslationMap doImport()
-    {
-        try
-        {
-            for (String locale : LOCALES)
-            {
-                TranslationHashMap trMap = new TranslationHashMap(Helper.getLocale(locale));
+    public TranslationMap doImport() {
+        try {
+            for (String locale : LOCALES) {
+                TranslationHashMap trMap = new TranslationHashMap(getLocale(locale));
                 trMap.doImport(TranslationMap.class.getResourceAsStream(locale + ".txt"));
                 add(trMap);
             }
             postImportHook();
             return this;
-        } catch (Exception ex)
-        {
+        } catch (Exception ex) {
             throw new RuntimeException(ex);
         }
     }
 
-    public void add( Translation tr )
-    {
+    public void add(Translation tr) {
         Locale locale = tr.getLocale();
         translations.put(locale.toString(), tr);
         if (!locale.getCountry().isEmpty() && !translations.containsKey(tr.getLanguage()))
             translations.put(tr.getLanguage(), tr);
 
-        // Map old Java 'standard' to latest, Java is a bit ugly here: http://stackoverflow.com/q/13974169/194609
-        // Hebrew
-        if ("iw".equals(locale.getLanguage()))
-            translations.put("he", tr);
+        // Hebrew locale was "iw" in old JDKs but is now he
+        // required in old JDKs:
+        if ("iw".equals(locale.getLanguage())) translations.put("he", tr);
+        // required since jdk17 to still provide translation for "iw":
+        if ("he".equals(locale.getLanguage())) translations.put("iw", tr);
 
-        // Indonesia
-        if ("in".equals(locale.getLanguage()))
-            translations.put("id", tr);
+        // Indonesia locale was "in_ID" in old JDKs but is now id_ID
+        // required in old JDKs:
+        if ("in".equals(locale.getLanguage())) translations.put("id", tr);
+        // required since jdk17 to still provide translation for "in":
+        if ("id".equals(locale.getLanguage())) translations.put("in", tr);
+        // Indian locales are: en-IN and hi-IN and are not overwritten by that
     }
 
     /**
-     * Returns the Translation object for the specified locale and falls back to english if the
+     * Returns the Translation object for the specified locale and falls back to English if the
      * locale was not found.
      */
-    public Translation getWithFallBack( Locale locale )
-    {
+    public Translation getWithFallBack(Locale locale) {
         Translation tr = get(locale.toString());
-        if (tr == null)
-        {
+        if (tr == null) {
             tr = get(locale.getLanguage());
             if (tr == null)
                 tr = get("en");
@@ -115,8 +119,7 @@ public class TranslationMap
     /**
      * Returns the Translation object for the specified locale and returns null if not found.
      */
-    public Translation get( String locale )
-    {
+    public Translation get(String locale) {
         locale = locale.replace("-", "_");
         Translation tr = translations.get(locale);
         if (locale.contains("_") && tr == null)
@@ -125,113 +128,105 @@ public class TranslationMap
         return tr;
     }
 
-    public static int countOccurence( String phrase, String splitter )
-    {
-        if (Helper.isEmpty(phrase))
-            return 0;
-        return phrase.trim().split(splitter).length;
-    }
-
     /**
      * This method does some checks and fills missing translation from en
      */
-    private void postImportHook()
-    {
+    private void postImportHook() {
         Map<String, String> enMap = get("en").asMap();
         StringBuilder sb = new StringBuilder();
-        for (Translation tr : translations.values())
-        {
+        for (Translation tr : translations.values()) {
             Map<String, String> trMap = tr.asMap();
-            for (Entry<String, String> enEntry : enMap.entrySet())
-            {
+            for (Entry<String, String> enEntry : enMap.entrySet()) {
                 String value = trMap.get(enEntry.getKey());
-                if (Helper.isEmpty(value))
-                {
+                if (isEmpty(value)) {
                     trMap.put(enEntry.getKey(), enEntry.getValue());
                     continue;
                 }
 
                 int expectedCount = countOccurence(enEntry.getValue(), "\\%");
-                if (expectedCount != countOccurence(value, "\\%"))
-                {
-                    sb.append(tr.getLocale()).append(" - error in ").append(enEntry.getKey()).append("->").
+                if (expectedCount != countOccurence(value, "\\%")) {
+                    sb.append(tr.getLocale()).append(" - error in ").
+                            append(enEntry.getKey()).append("->").
                             append(value).append("\n");
+                } else {
+                    // try if formatting works, many times e.g. '%1$' instead of '%1$s'
+                    Object[] strs = new String[expectedCount];
+                    Arrays.fill(strs, "tmp");
+                    try {
+                        String.format(Locale.ROOT, value, strs);
+                    } catch (Exception ex) {
+                        sb.append(tr.getLocale()).append(" - error ").append(ex.getMessage()).append("in ").
+                                append(enEntry.getKey()).append("->").
+                                append(value).append("\n");
+                    }
                 }
             }
         }
 
-        if (sb.length() > 0)
-        {
+        if (sb.length() > 0) {
             System.out.println(sb);
             throw new IllegalStateException(sb.toString());
         }
     }
 
-    public static class TranslationHashMap implements Translation
-    {
-        private final Map<String, String> map = new HashMap<String, String>();
-        final Locale locale;
+    @Override
+    public String toString() {
+        return translations.toString();
+    }
 
-        public TranslationHashMap( Locale locale )
-        {
+    public static class TranslationHashMap implements Translation {
+        final Locale locale;
+        private final Map<String, String> map = new HashMap<>();
+
+        public TranslationHashMap(Locale locale) {
             this.locale = locale;
         }
 
-        public void clear()
-        {
+        public void clear() {
             map.clear();
         }
 
         @Override
-        public Locale getLocale()
-        {
+        public Locale getLocale() {
             return locale;
         }
 
         @Override
-        public String getLanguage()
-        {
+        public String getLanguage() {
             return locale.getLanguage();
         }
 
         @Override
-        public String tr( String key, Object... params )
-        {
-            String val = map.get(key.toLowerCase());
-            if (Helper.isEmpty(val))
+        public String tr(String key, Object... params) {
+            String val = map.get(toLowerCase(key));
+            if (isEmpty(val))
                 return key;
 
-            return String.format(val, params);
+            return String.format(Locale.ROOT, val, params);
         }
 
-        public TranslationHashMap put( String key, String val )
-        {
-            String existing = map.put(key.toLowerCase(), val);
+        public TranslationHashMap put(String key, String val) {
+            String existing = map.put(toLowerCase(key), val);
             if (existing != null)
                 throw new IllegalStateException("Cannot overwrite key " + key + " with " + val + ", was: " + existing);
             return this;
         }
 
         @Override
-        public String toString()
-        {
+        public String toString() {
             return map.toString();
         }
 
         @Override
-        public Map<String, String> asMap()
-        {
+        public Map<String, String> asMap() {
             return map;
         }
 
-        public TranslationHashMap doImport( InputStream is )
-        {
+        public TranslationHashMap doImport(InputStream is) {
             if (is == null)
                 throw new IllegalStateException("No input stream found in class path!?");
-            try
-            {
-                for (String line : Helper.readFile(new InputStreamReader(is, Helper.UTF_CS)))
-                {
+            try {
+                for (String line : readFile(new InputStreamReader(is, UTF_CS))) {
                     if (line.isEmpty() || line.startsWith("//") || line.startsWith("#"))
                         continue;
 
@@ -247,17 +242,10 @@ public class TranslationMap
                         put(key, value);
 
                 }
-            } catch (IOException ex)
-            {
+            } catch (IOException ex) {
                 throw new RuntimeException(ex);
             }
             return this;
         }
-    }
-
-    @Override
-    public String toString()
-    {
-        return translations.toString();
     }
 }

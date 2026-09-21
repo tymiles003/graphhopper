@@ -1,14 +1,14 @@
 /*
- *  Licensed to GraphHopper and Peter Karich under one or more contributor
- *  license agreements. See the NOTICE file distributed with this work for 
+ *  Licensed to GraphHopper GmbH under one or more contributor
+ *  license agreements. See the NOTICE file distributed with this work for
  *  additional information regarding copyright ownership.
- * 
- *  GraphHopper licenses this file to you under the Apache License, 
- *  Version 2.0 (the "License"); you may not use this file except in 
+ *
+ *  GraphHopper GmbH licenses this file to you under the Apache License,
+ *  Version 2.0 (the "License"); you may not use this file except in
  *  compliance with the License. You may obtain a copy of the License at
- * 
+ *
  *       http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -17,51 +17,58 @@
  */
 package com.graphhopper.storage;
 
-import java.nio.ByteOrder;
+import java.util.Map;
 
 /**
  * Maintains a collection of DataAccess objects stored at the same location. One GraphStorage per
  * Directory as we need one to maintain one DataAccess object for nodes, edges and location2id
  * index.
- * <p/>
+ * <p>
+ *
  * @author Peter Karich
  */
-public interface Directory
-{
+public interface Directory {
     /**
      * @return an id or location in the local filesystem.
      */
     String getLocation();
 
     /**
-     * @return the order in which the data is stored
+     * Creates a new DataAccess object with the given name in the location of this Directory. Each name can only
+     * be used once.
      */
-    ByteOrder getByteOrder();
+    DataAccess create(String name);
 
     /**
-     * Tries to find the object with that name if not existent it creates one and associates the
-     * location with it. A name is unique in one Directory.
+     * @param segmentSize segment size in bytes or -1 to use the default of the corresponding DataAccess implementation
      */
-    DataAccess find( String name );
+    DataAccess create(String name, int segmentSize);
 
-    DataAccess find( String name, DAType type );
+    DataAccess create(String name, DAType type);
 
-    /**
-     * Renames the specified DataAccess object into one.
-     */
-    // DataAccess rename( DataAccess da, String newName );
+    DataAccess create(String name, DAType type, int segmentSize);
+
     /**
      * Removes the specified object from the directory.
      */
-    void remove( DataAccess da );
+    void remove(String name);
 
     /**
      * @return the default type of a newly created DataAccess object
      */
     DAType getDefaultType();
 
+    DAType getDefaultType(String dataAccess, boolean preferInts);
+
     /**
      * Removes all contained objects from the directory and releases its resources.
      */
     void clear();
+
+    /**
+     * Releases all allocated resources from the directory without removing backing files.
+     */
+    void close();
+
+    Map<String, DataAccess> getDAs();
 }

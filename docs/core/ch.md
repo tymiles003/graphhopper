@@ -1,11 +1,11 @@
 # Contraction Hierarchies
 
 CH is a post-import process which makes routing faster. 
-In GraphHopper CH is enabled by default but can be easily disabled.
+You can enable this when you add the profile to `profiles_ch` in the config.yml
 
-To make CH work in GraphHopper a LevelGraphStorage instead of the normal GraphStorage 
-is necessary which allows to store shortcuts too.
+To make CH work in GraphHopper an additional shortcut storage and logic is
+implemented.
 
-A prepared graph can also be used for normal graph traversal IF you use graph.getBaseGraph().
+A prepared graph can also be used for normal graph traversal IF you use chGraph.getBaseGraph().
 
-If CH is enabled multiple vehicles will work but only one works in speed-up mode and is faster, see issue #111.
+Details about the edge-based version of CH, that also allows taking into account turn costs and restrictions can be found [here](./edge-based-ch.md).

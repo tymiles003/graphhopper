@@ -1,12 +1,11 @@
 /*
- *  Licensed to Peter Karich under one or more contributor license
- *  agreements. See the NOTICE file distributed with this work for
+ *  Licensed to GraphHopper GmbH under one or more contributor
+ *  license agreements. See the NOTICE file distributed with this work for
  *  additional information regarding copyright ownership.
  *
- *  Peter Karich licenses this file to you under the Apache License,
- *  Version 2.0 (the "License"); you may not use this file except
- *  in compliance with the License. You may obtain a copy of the
- *  License at
+ *  GraphHopper GmbH licenses this file to you under the Apache License,
+ *  Version 2.0 (the "License"); you may not use this file except in
+ *  compliance with the License. You may obtain a copy of the License at
  *
  *       http://www.apache.org/licenses/LICENSE-2.0
  *
@@ -21,130 +20,80 @@ package com.graphhopper.storage;
 import com.graphhopper.util.Helper;
 
 /**
- * A helper class for GraphHopperStorage for its node access.
- * <p>
  * @author Peter Karich
  */
-class GHNodeAccess implements NodeAccess
-{
-    private final GraphHopperStorage that;
-    private final boolean elevation;
+class GHNodeAccess implements NodeAccess {
+    private final BaseGraphNodesAndEdges store;
 
-    public GHNodeAccess( GraphHopperStorage that, boolean withElevation )
-    {
-        this.that = that;
-        this.elevation = withElevation;
+    public GHNodeAccess(BaseGraphNodesAndEdges store) {
+        this.store = store;
     }
 
     @Override
-    public void ensureNode( int nodeId )
-    {
-        that.ensureNodeIndex(nodeId);
+    public void ensureNode(int nodeId) {
+        store.ensureNodeCapacity(nodeId);
     }
 
     @Override
-    public final void setNode( int nodeId, double lat, double lon )
-    {
-        setNode(nodeId, lat, lon, Double.NaN);
-    }
+    public final void setNode(int nodeId, double lat, double lon, double ele) {
+        store.ensureNodeCapacity(nodeId);
+        store.setLat(store.toNodePointer(nodeId), lat);
+        store.setLon(store.toNodePointer(nodeId), lon);
 
-    @Override
-    public final void setNode( int nodeId, double lat, double lon, double ele )
-    {
-        that.ensureNodeIndex(nodeId);
-        long tmp = (long) nodeId * that.nodeEntryBytes;
-        that.nodes.setInt(tmp + that.N_LAT, Helper.degreeToInt(lat));
-        that.nodes.setInt(tmp + that.N_LON, Helper.degreeToInt(lon));
-
-        if (is3D())
-        {
+        if (store.withElevation()) {
             // meter precision is sufficient for now
-            that.nodes.setInt(tmp + that.N_ELE, Helper.eleToInt(ele));
-            that.bounds.update(lat, lon, ele);
-
-        } else
-        {
-            that.bounds.update(lat, lon);
-        }
-
-        // set the default value for the additional field of this node
-        if (that.extStorage.isRequireNodeField())
-            that.nodes.setInt(tmp + that.N_ADDITIONAL, that.extStorage.getDefaultNodeFieldValue());
-    }
-
-    @Override
-    public final double getLatitude( int nodeId )
-    {
-        return Helper.intToDegree(that.nodes.getInt((long) nodeId * that.nodeEntryBytes + that.N_LAT));
-    }
-
-    @Override
-    public final double getLongitude( int nodeId )
-    {
-        return Helper.intToDegree(that.nodes.getInt((long) nodeId * that.nodeEntryBytes + that.N_LON));
-    }
-
-    @Override
-    public final double getElevation( int nodeId )
-    {
-        if (!elevation)
-            throw new IllegalStateException("Cannot access elevation - 3D is not enabled");
-
-        return Helper.intToEle(that.nodes.getInt((long) nodeId * that.nodeEntryBytes + that.N_ELE));
-    }
-
-    @Override
-    public final double getEle( int nodeId )
-    {
-        return getElevation(nodeId);
-    }
-
-    @Override
-    public final double getLat( int nodeId )
-    {
-        return getLatitude(nodeId);
-    }
-
-    @Override
-    public final double getLon( int nodeId )
-    {
-        return getLongitude(nodeId);
-    }
-
-    @Override
-    public final void setAdditionalNodeField( int index, int additionalValue )
-    {
-        if (that.extStorage.isRequireNodeField() && that.N_ADDITIONAL >= 0)
-        {
-            that.ensureNodeIndex(index);
-            long tmp = (long) index * that.nodeEntryBytes;
-            that.nodes.setInt(tmp + that.N_ADDITIONAL, additionalValue);
-        } else
-        {
-            throw new AssertionError("This graph does not provide an additional node field");
+            store.setEle(store.toNodePointer(nodeId), ele);
+            // Helper.ELE_UNKNOWN is a marker value for deferred elevation, don't let it poison bounds
+            if (ele != Helper.ELE_UNKNOWN)
+                store.bounds.update(lat, lon, ele);
+        } else {
+            store.bounds.update(lat, lon);
         }
     }
 
     @Override
-    public final int getAdditionalNodeField( int index )
-    {
-        if (that.extStorage.isRequireNodeField() && that.N_ADDITIONAL >= 0)
-            return that.nodes.getInt((long) index * that.nodeEntryBytes + that.N_ADDITIONAL);
+    public final double getLat(int nodeId) {
+        return store.getLat(store.toNodePointer(nodeId));
+    }
+
+    @Override
+    public final double getLon(int nodeId) {
+        return store.getLon(store.toNodePointer(nodeId));
+    }
+
+    @Override
+    public final double getEle(int nodeId) {
+        if (!store.withElevation())
+            throw new IllegalStateException("elevation is disabled");
+        return store.getEle(store.toNodePointer(nodeId));
+    }
+
+    @Override
+    public final void setTurnCostIndex(int index, int turnCostIndex) {
+        if (store.withTurnCosts()) {
+            // todo: remove ensure?
+            store.ensureNodeCapacity(index);
+            store.setTurnCostRef(store.toNodePointer(index), turnCostIndex);
+        } else {
+            throw new AssertionError("This graph does not support turn costs");
+        }
+    }
+
+    @Override
+    public final int getTurnCostIndex(int index) {
+        if (store.withTurnCosts())
+            return store.getTurnCostRef(store.toNodePointer(index));
         else
-            throw new AssertionError("This graph does not provide an additional node field");
+            throw new AssertionError("This graph does not support turn costs");
     }
 
     @Override
-    public final boolean is3D()
-    {
-        return elevation;
+    public final boolean is3D() {
+        return store.withElevation();
     }
 
     @Override
-    public int getDimension()
-    {
-        if (elevation)
-            return 3;
-        return 2;
+    public int getDimension() {
+        return store.withElevation() ? 3 : 2;
     }
 }

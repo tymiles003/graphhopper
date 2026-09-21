@@ -1,14 +1,14 @@
 /*
- *  Licensed to GraphHopper and Peter Karich under one or more contributor
- *  license agreements. See the NOTICE file distributed with this work for 
+ *  Licensed to GraphHopper GmbH under one or more contributor
+ *  license agreements. See the NOTICE file distributed with this work for
  *  additional information regarding copyright ownership.
- * 
- *  GraphHopper licenses this file to you under the Apache License, 
- *  Version 2.0 (the "License"); you may not use this file except in 
+ *
+ *  GraphHopper GmbH licenses this file to you under the Apache License,
+ *  Version 2.0 (the "License"); you may not use this file except in
  *  compliance with the License. You may obtain a copy of the License at
- * 
+ *
  *       http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -17,138 +17,116 @@
  */
 package com.graphhopper.routing;
 
-import gnu.trove.map.TIntObjectMap;
-import gnu.trove.map.hash.TIntObjectHashMap;
+import com.carrotsearch.hppc.IntObjectMap;
+import com.graphhopper.coll.GHIntObjectHashMap;
+import com.graphhopper.routing.util.TraversalMode;
+import com.graphhopper.routing.weighting.Weighting;
+import com.graphhopper.storage.Graph;
+import com.graphhopper.util.EdgeIterator;
+import com.graphhopper.util.EdgeIteratorState;
+import com.graphhopper.util.GHUtility;
+import com.graphhopper.util.Parameters;
 
 import java.util.PriorityQueue;
-
-import com.graphhopper.routing.util.FlagEncoder;
-import com.graphhopper.routing.util.TraversalMode;
-import com.graphhopper.routing.util.Weighting;
-import com.graphhopper.storage.EdgeEntry;
-import com.graphhopper.storage.Graph;
-import com.graphhopper.util.EdgeExplorer;
-import com.graphhopper.util.EdgeIterator;
 
 /**
  * Implements a single source shortest path algorithm
  * http://en.wikipedia.org/wiki/Dijkstra's_algorithm
- * <p/>
+ * <p>
+ *
  * @author Peter Karich
  */
-public class Dijkstra extends AbstractRoutingAlgorithm
-{
-    protected TIntObjectMap<EdgeEntry> fromMap;
-    protected PriorityQueue<EdgeEntry> fromHeap;
-    protected EdgeEntry currEdge;
+public class Dijkstra extends AbstractRoutingAlgorithm {
+    protected IntObjectMap<SPTEntry> fromMap;
+    protected PriorityQueue<SPTEntry> fromHeap;
+    protected SPTEntry currEdge;
     private int visitedNodes;
     private int to = -1;
 
-    public Dijkstra( Graph g, FlagEncoder encoder, Weighting weighting, TraversalMode tMode )
-    {
-        super(g, encoder, weighting, tMode);
-        initCollections(1000);
+    public Dijkstra(Graph graph, Weighting weighting, TraversalMode tMode) {
+        super(graph, weighting, tMode);
+        int size = Math.min(Math.max(200, graph.getNodes() / 10), 2000);
+        initCollections(size);
     }
 
-    protected void initCollections( int size )
-    {
-        fromHeap = new PriorityQueue<EdgeEntry>(size);
-        fromMap = new TIntObjectHashMap<EdgeEntry>(size);
+    protected void initCollections(int size) {
+        fromHeap = new PriorityQueue<>(size);
+        fromMap = new GHIntObjectHashMap<>(size);
     }
 
     @Override
-    public Path calcPath( int from, int to )
-    {
+    public Path calcPath(int from, int to) {
         checkAlreadyRun();
+        setupFinishTime();
         this.to = to;
-        currEdge = createEdgeEntry(from, 0);
+        SPTEntry startEntry = new SPTEntry(from, 0);
+        fromHeap.add(startEntry);
         if (!traversalMode.isEdgeBased())
-        {
             fromMap.put(from, currEdge);
-        }
         runAlgo();
         return extractPath();
     }
 
-    protected void runAlgo()
-    {
-        EdgeExplorer explorer = outEdgeExplorer;
-        while (true)
-        {
+    protected void runAlgo() {
+        while (!fromHeap.isEmpty()) {
+            currEdge = fromHeap.poll();
+            if (currEdge.isDeleted())
+                continue;
             visitedNodes++;
-            if (isWeightLimitReached() || finished())
+            if (isMaxVisitedNodesExceeded() || finished() || isTimeoutExceeded())
                 break;
 
-            int startNode = currEdge.adjNode;
-            EdgeIterator iter = explorer.setBaseNode(startNode);
-            while (iter.next())
-            {
+            int currNode = currEdge.adjNode;
+            EdgeIterator iter = edgeExplorer.setBaseNode(currNode);
+            while (iter.next()) {
                 if (!accept(iter, currEdge.edge))
                     continue;
 
-                int traversalId = traversalMode.createTraversalId(iter, false);
-                double tmpWeight = weighting.calcWeight(iter, false, currEdge.edge) + currEdge.weight;
-                if (Double.isInfinite(tmpWeight))
+                double tmpWeight = GHUtility.calcWeightWithTurnWeight(weighting, iter, false, currEdge.edge) + currEdge.weight;
+                if (Double.isInfinite(tmpWeight)) {
                     continue;
+                }
+                int traversalId = traversalMode.createTraversalId(iter, false);
 
-                EdgeEntry nEdge = fromMap.get(traversalId);
-                if (nEdge == null)
-                {
-                    nEdge = new EdgeEntry(iter.getEdge(), iter.getAdjNode(), tmpWeight);
-                    nEdge.parent = currEdge;
+                SPTEntry nEdge = fromMap.get(traversalId);
+                if (nEdge == null) {
+                    nEdge = new SPTEntry(iter.getEdge(), iter.getAdjNode(), tmpWeight, currEdge);
                     fromMap.put(traversalId, nEdge);
                     fromHeap.add(nEdge);
-                } else if (nEdge.weight > tmpWeight)
-                {
-                    fromHeap.remove(nEdge);
-                    nEdge.edge = iter.getEdge();
-                    nEdge.weight = tmpWeight;
-                    nEdge.parent = currEdge;
+                } else if (nEdge.weight > tmpWeight) {
+                    nEdge.setDeleted();
+                    nEdge = new SPTEntry(iter.getEdge(), iter.getAdjNode(), tmpWeight, currEdge);
+                    fromMap.put(traversalId, nEdge);
                     fromHeap.add(nEdge);
                 } else
                     continue;
 
                 updateBestPath(iter, nEdge, traversalId);
             }
-
-            if (fromHeap.isEmpty())
-                break;
-
-            currEdge = fromHeap.poll();
-            if (currEdge == null)
-                throw new AssertionError("Empty edge cannot happen");
         }
     }
 
-    @Override
-    protected boolean finished()
-    {
+    protected boolean finished() {
         return currEdge.adjNode == to;
     }
 
-    @Override
-    protected Path extractPath()
-    {
-        if (currEdge == null || isWeightLimitReached() || !finished())
+    private Path extractPath() {
+        if (currEdge == null || !finished())
             return createEmptyPath();
 
-        return new Path(graph, flagEncoder).setWeight(currEdge.weight).setEdgeEntry(currEdge).extract();
+        return PathExtractor.extractPath(graph, weighting, currEdge);
     }
 
     @Override
-    public int getVisitedNodes()
-    {
+    public int getVisitedNodes() {
         return visitedNodes;
     }
 
-    protected boolean isWeightLimitReached()
-    {
-        return currEdge.weight >= weightLimit;
+    protected void updateBestPath(EdgeIteratorState edgeState, SPTEntry bestSPTEntry, int traversalId) {
     }
 
     @Override
-    public String getName()
-    {
-        return AlgorithmOptions.DIJKSTRA;
+    public String getName() {
+        return Parameters.Algorithms.DIJKSTRA;
     }
 }

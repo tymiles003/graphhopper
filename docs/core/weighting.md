@@ -1,74 +1,27 @@
 ## Weighting
 
-In order to create a custom Weighting you need to do the following:
+Instead of creating a new Weighting implementation it is highly recommended to use the CustomWeighting instead, which is explained in
+the [profiles](profiles.md) and [custom models](custom-models.md) section.
 
- 1. implement the Weighting class
- 2. create a subclass of GraphHopper and overwrite createWeighting where you return a new instance of your custom weighting if e.g. the string 'customweighting' is specified. Otherwise let the super class handle it.
+A weighting calculates the "weight" for an edge. The weight of an edge reflects the cost of travelling along this edge.
+All implementations of [RoutingAlgorithm](https://github.com/graphhopper/graphhopper/blob/master/core/src/main/java/com/graphhopper/routing/RoutingAlgorithm.java)
+in GraphHopper calculate the shortest path, which means the path with the [lowest overall cost from A to B](https://en.wikipedia.org/wiki/Shortest_path_problem).
+The definition of the cost function is up to you, so you can create a cost function (we call this weighting) for the fastest path.
+GraphHopper will still calculate the path with the lowest cost, but you can define the cost as a mix of distance speed, as shown in the
+[FastestWeighting](https://github.com/graphhopper/graphhopper/blob/master/core/src/main/java/com/graphhopper/routing/weighting/FastestWeighting.java).
 
-Here is an example of a custom weighting which avoids certain edges (i.e. returns infinity weight):
+In order to create a custom weighting you need to do the following:
 
-```java
+ 1. Implement the Weighting class and the WeightingFactory
+ 2. Let the GraphHopper class know about your WeightingFactory via overriding createWeightingFactory
 
-class BlockingWeighting implements Weighting 
-{
-    private final FlagEncoder encoder;
-    private final double maxSpeed;
-    private Set<Integer> forbiddenEdges;
+### Implement your own weighting
 
-    public BlockingWeighting( FlagEncoder encoder, Set<Integer> forbiddenEdges)
-    {
-        this.encoder = encoder;
-        this.maxSpeed = encoder.getMaxSpeed();
-        this.forbiddenEdges = forbiddenEdges;
-    }
+A simple weighting is the [ShortestWeighting](https://github.com/graphhopper/graphhopper/blob/master/core/src/main/java/com/graphhopper/routing/weighting/ShortestWeighting.java),
+it calculates the shortest path. You could go from there and create your own weighting.
 
-    @Override
-    public double getMinWeight( double distance )
-    {
-        return distance / maxSpeed;
-    }
-
-    @Override
-    public double calcWeight( EdgeIteratorState edgeState, boolean reverse, int prevOrNextEdgeId )
-    {
-        if(forbiddenEdges.contains(edge.getEdge()))
-            return Double.POSITIVE_INFINITY;
-
-        double speed = reverse ? encoder.getReverseSpeed(edge.getFlags()) : encoder.getSpeed(edge.getFlags());
-        if (speed == 0)
-            return Double.POSITIVE_INFINITY;
-        return edge.getDistance() / speed;
-    }
-
-    @Override
-    public String toString()
-    {
-        return "BLOCKING";
-    }
-}
-```
-
-Now you need to create your custom GraphHopper:
-
-```java
-class MyGraphHopper extends GraphHopper {
-
-    Set<Integer> forbiddenEdges;
-    public void determineForbiddenEdges() {
-       forbiddenEdges = ...
-    }
-
-    @Override
-    public Weighting createWeighting( WeightingMap wMap, FlagEncoder encoder )
-    {
-        String weighting = wMap.getWeighting();
-        if ("BLOCKING".equalsIgnoreCase(weighting))
-            return new BlockingWeighting(encoder, forbiddenEdges);
-        else
-            return super.createWeighting(weighting, encoder);
-    }
-}
-```
-
-For forbiddenEdges you need to determine the edges from some GPS coordinates. 
-Have a look into the [location index docs](./location-index.md).
+If you only want to change small parts of an existing weighting, it might be a good idea to extend the [AbstractAdjustedWeighting](https://github.com/graphhopper/graphhopper/blob/master/core/src/main/java/com/graphhopper/routing/weighting/AbstractAdjustedWeighting.java),
+a sample can be found in the [AvoidEdgesWeighting](https://github.com/graphhopper/graphhopper/blob/master/core/src/main/java/com/graphhopper/routing/weighting/AvoidEdgesWeighting.java).
+If your weights change on a per-request base you cannot use the 'speed mode', but have to use the 'hybrid mode' or 'flexible mode' (more details [here](https://github.com/graphhopper/graphhopper#technical-overview)).
+If you haven't disabled the 'speed mode' in your config, you have to disable it for the requests by appending `ch.disable=true`
+in the request url.

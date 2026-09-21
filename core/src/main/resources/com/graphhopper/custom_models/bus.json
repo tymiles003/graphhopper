@@ -1,0 +1,27 @@
+// to use this custom model you need to set the following option in the config.yml
+// graph.encoded_values: max_weight, max_width, max_height, bus_access, road_class, car_average_speed, max_speed, ferry_speed
+// profiles:
+//    - name: bus
+//      custom_model_files: [bus.json]
+//
+// There is also a hov_access which might be suitable for carpooling and can replace or be combined with bus_access
+
+{
+  "distance_influence": 90,
+  "parameters": { "vehicle_weight": 5, "vehicle_width": 3, "vehicle_height": 4, "vehicle_max_speed": { "value": 100, "min": 10, "max": 140 } },
+  "priority": [
+    { "if": "max_weight < p_vehicle_weight || max_width < p_vehicle_width || max_height < p_vehicle_height", "multiply_by": "0" },
+    { "if": "road_class == TRACK", "multiply_by": "0" },
+    { "if": "bus_access",
+      "multiply_by": "1"
+    },
+    { "else": "", "multiply_by": "0" }
+  ],
+  "speed": [
+    { "if": "road_environment == FERRY", "limit_to": "ferry_speed" },
+    { "else_if": "bus_access && car_average_speed < 10", "limit_to": "10" },
+    { "else": "", "limit_to": "car_average_speed * 0.9" },
+    { "if": "true", "limit_to": "max_speed * 0.9" },
+    { "if": "true", "limit_to": "p_vehicle_max_speed" }
+  ]
+}

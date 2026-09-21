@@ -1,10 +1,11 @@
-Submit a new issue only if you are sure it is a missing feature or a bug. Otherwise discuss the topic on the 
-[mailing list](http://graphhopper.com/#developers) first. For new translations or fixes to existing translations
+Submit a new issue only if you are sure it is a missing feature or a bug. For questions or if you are unsure [discuss the topic in our forum](https://discuss.graphhopper.com/c/graphhopper). 
+
+For new translations or fixes to existing translations,
 please refer to [this documentation](https://github.com/graphhopper/graphhopper/blob/master/docs/core/translations.md).
 
 Issues for newcomers are tagged with 
 ['good first issue'](https://github.com/graphhopper/graphhopper/labels/good%20first%20issue) 
-and documentation issues are taged with 
+and documentation issues are tagged with 
 ['documentation'](https://github.com/graphhopper/graphhopper/labels/documentation).
 
 ## We love pull requests. Here's a quick guide:
@@ -24,13 +25,19 @@ appear on your fork its github page afterwards.
 
 ## License Agreement
 
-For contributions like pull requests, bug fixes and translations please read and electronically sign 
-the <a href="http://www.clahub.com/agreements/graphhopper/graphhopper">GraphHopper License Agreement</a>,
-which gives not away your rights but it will make sure for others that you agree to the Apache License, Version 2.
+All contributions like pull requests, bug fixes, documentation changes and translations fall under the Apache License and contributors agree to our
+<a href="https://www.graphhopper.com/code-of-conduct/">contributor covenant code of conduct</a>.
 
-## Syntax:
+## Code formatting
 
-* Tell this your IDE or just use NetBeans which picks the format from pom.xml. E.g. no tabs - use 4 spaces instead!
-* Follow the conventions you see used in the source already.
+We use IntelliJ defaults. For eclipse there is this [configuration](https://github.com/graphhopper/graphhopper/files/481920/GraphHopper.Formatter.zip). 
+For other IDEs we use [editorconfig](https://github.com/graphhopper/graphhopper/pull/2791) or the following rules:
+
+ * Java indent is 4 spaces
+ * Line width is 100 characters
+ * The rest is left to Java coding standards but disable "auto-format on save" to prevent unnecessary format changes. 
+ * Currently we do not care about import section that much, avoid changing it
+ * Unix line endings (should be handled via git)
+ * See discussion in [#770](https://github.com/graphhopper/graphhopper/issues/770)
 
 And in case we didn't emphasize it enough: we love tests!

@@ -1,75 +1,47 @@
-To do routing in your Java code you'll need just a few lines of code:
+# Routing via Java API
 
-```java
-GraphHopper hopper = new GraphHopper().forServer();
-hopper.setInMemory(true);
-hopper.setOSMFile(osmFile);
-// where to store graphhopper files?
-hopper.setGraphHopperLocation(graphFolder);
-hopper.setEncodingManager(new EncodingManager("car"));
+To use the following examples you need to specify the dependency in
+your [Maven config](/README.md#maven) correctly.
 
-// now this can take minutes if it imports or a few seconds for loading
-// of course this is dependent on the area you import
-hopper.importOrLoad();
+To do routing in your Java code you'll need just a few lines of code.
 
-// simple configuration of the request object, see the GraphHopperServlet classs for more possibilities.
-GHRequest req = new GHRequest(latFrom, lonFrom, latTo, lonTo).
-    setWeighting("fastest").
-    setVehicle("car");
-GHResponse rsp = hopper.route(req);
+See [this code example](../../example/src/main/java/com/graphhopper/example/RoutingExample.java)
+on how to do that where also code examples for the next sections are
+included.
 
-// first check for errors
-if(rsp.hasErrors()) {
-   // handle them!
-   // rsp.getErrors()
-   return;
-}
+## Speed mode vs. Hybrid mode vs. Flexible mode
 
-// route was found? e.g. if disconnected areas (like island) 
-// no route can ever be found
-if(!rsp.isFound()) {
-   // handle properly
-   return;
-}
+GraphHopper offers three different choices of algorithms for routing: The speed mode (which implements Contraction
+Hierarchies (CH) and is by far the fastest), the hybrid mode (which uses Landmarks (LM) and is still fast, but also supports
+some features CH does not support) and the flexible mode (Dijkstra or A*) which does not require calculating index data
+and offers full flexibility and is comparable slow especially for longer routes.
 
-// points, distance in meters and time in millis of the full path
-PointList pointList = rsp.getPoints();
-double distance = rsp.getDistance();
-long millis = rsp.getMillis();
+See the [profiles](./profiles.md) for an explanation how to configure the different routing modes. At query time you
+can disable speed mode using `ch.disable=true`. In this case either hybrid mode (if there is an LM preparation for the
+chosen profile) or flexible mode will be used. To use flexible mode in the presence of an LM preparation you need to 
+also set `lm.disable=true`.
 
-// get the turn instructions for the path
-InstructionList il = rsp.getInstructions();
-Translation tr = trMap.getWithFallBack(Locale.US);
-List<String> iList = il.createDescription(tr);
+To calculate a route you have to pick one vehicle and optionally an algorithm like
+`bidirectional_astar`, see the test speedModeVersusHybridMode.
 
-// or get the result as gpx entries:
-List<GPXEntry> list = il.createGPXList();
-```
+## Heading
 
-The default is to use the speed-up mode for one profile. If you need multiple profiles you 
-specify a list of profiles (e.g. car,bike) and the speed-up mode is applied to the first profile only (e.g. car).
-The other vehicles then use a more flexible routing.
+The flexible and hybrid modes allow adding a desired heading (north based azimuth between 0 and 360 degree)
+to any point. Adding a heading makes it more likely that a route starts towards the provided direction, because
+roads going into other directions are penalized. See [heading](./heading.md) for an example and more information.
 
-You can also completely disable the speed-up mode to make all vehicles using the flexibility mode.
-Then pick one vehicle and optionally the algorithm like 'bidirectional astar' as algorithm:
+## Alternative Routes
 
-```java
-GraphHopper hopper = new GraphHopper().forServer();
-hopper.disableCHShortcuts();
-hopper.setInMemory(true);
-hopper.setOSMFile(osmFile);
-hopper.setGraphHopperLocation(graphFolder);
-hopper.setEncodingManager(new EncodingManager("car,bike"));
+For all modes you can calculate alternative routes. Note, that the algorithm
+for CH is different to the algorithm used for LM or flexible mode. In all
+caases this setting will affect the speed of your routing requests. See
+the test headingAndAlternativeRoute and the Parameters class for further hints.
 
-hopper.importOrLoad();
+## Java client (client-hc)
+ 
+If you want to calculate routes using the [GraphHopper Directions API](https://www.graphhopper.com/products/) or 
+a self hosted instance of GraphHopper, you can use the [Java and Android client-hc](https://github.com/graphhopper/graphhopper/tree/master/client-hc):
 
-GHRequest req = new GHRequest(latFrom, lonFrom, latTo, lonTo).
-    setVehicle("bike").setAlgorithm(AlgorithmOptions.ASTAR_BI);
-GHResponse res = hopper.route(req);
-```
-
-In case you need a web access in a Java or an Android application the GraphHopperWeb class comes handy,
- see the 'web' sub module.
 
 ```java
 GraphHopperAPI gh = new GraphHopperWeb();
@@ -80,3 +52,5 @@ gh.load("http://your-graphhopper-service.com");
 
 GHResponse rsp = gh.route(new GHRequest(...));
 ```
+
+There are also clients for [Java Script](https://github.com/graphhopper/directions-api-js-client) and [other languages](https://github.com/graphhopper/directions-api-clients)).

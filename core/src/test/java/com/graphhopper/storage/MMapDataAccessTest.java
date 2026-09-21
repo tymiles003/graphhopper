@@ -1,14 +1,14 @@
 /*
- *  Licensed to GraphHopper and Peter Karich under one or more contributor
- *  license agreements. See the NOTICE file distributed with this work for 
+ *  Licensed to GraphHopper GmbH under one or more contributor
+ *  license agreements. See the NOTICE file distributed with this work for
  *  additional information regarding copyright ownership.
- * 
- *  GraphHopper licenses this file to you under the Apache License, 
- *  Version 2.0 (the "License"); you may not use this file except in 
+ *
+ *  GraphHopper GmbH licenses this file to you under the Apache License,
+ *  Version 2.0 (the "License"); you may not use this file except in
  *  compliance with the License. You may obtain a copy of the License at
- * 
+ *
  *       http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -17,24 +17,22 @@
  */
 package com.graphhopper.storage;
 
-import static org.junit.Assert.*;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * @author Peter Karich
  */
-public class MMapDataAccessTest extends DataAccessTest
-{
+public class MMapDataAccessTest extends DataAccessTest {
     @Override
-    public DataAccess createDataAccess( String name )
-    {
-        return new MMapDataAccess(name, directory, defaultOrder, true).setSegmentSize(128);
+    public DataAccess createDataAccess(String name, int segmentSize) {
+        return new MMapDataAccess(name, directory, true, segmentSize);
     }
 
     @Test
-    public void textMixRAM2MMAP()
-    {
-        DataAccess da = new RAMDataAccess(name, directory, true, defaultOrder);
+    public void textMixRAM2MMAP() {
+        DataAccess da = new RAMDataAccess(name, directory, -1, false);
         assertFalse(da.loadExisting());
         da.create(100);
         da.setInt(7 * 4, 123);
@@ -47,8 +45,7 @@ public class MMapDataAccessTest extends DataAccessTest
     }
 
     @Test
-    public void textMixMMAP2RAM()
-    {
+    public void textMixMMAP2RAM() {
         DataAccess da = createDataAccess(name);
         assertFalse(da.loadExisting());
         da.create(100);
@@ -57,7 +54,7 @@ public class MMapDataAccessTest extends DataAccessTest
         // TODO "memory mapped flush" is expensive and not required. only writing the header is required.
         da.flush();
         da.close();
-        da = new RAMDataAccess(name, directory, true, defaultOrder);
+        da = new RAMDataAccess(name, directory, -1, false);
         assertTrue(da.loadExisting());
         assertEquals(123, da.getInt(7 * 4));
         da.close();
